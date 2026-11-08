@@ -10,6 +10,65 @@ import (
 	"github.com/telesma-app/openpgp/protocol"
 )
 
+func TestGetPWStatusBytes(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		new  func(*testing.T, ...step) *client.Client
+		wire []byte
+	}{
+		{name: "short", new: newClient, wire: []byte{0, 0xca, 0, 0xc4, 0}},
+		{name: "extended", new: newExtendedClient, wire: []byte{0, 0xca, 0, 0xc4, 0, 0, 0}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			data := []byte{1, 0xa0, 0xfe, 0xc0, 3, 2, 1}
+			c := test.new(t, step{command: test.wire, response: iso7816.Response{Status: 0x9000, Data: data}})
+			want := protocol.PWStatusBytes{
+				PW1ValidForMultipleSignatures: true, PW1MaxLength: 32, ResettingCodeMaxLength: 254,
+				PW3MaxLength: 64, PW1PINBlock2: true, PW3PINBlock2: true,
+				PW1Retries: 3, ResettingCodeRetries: 2, PW3Retries: 1,
+			}
+
+			got, err := c.GetPWStatusBytes(t.Context())
+			if err != nil || got != want {
+				t.Errorf("password status bytes = %+v, %v; want %+v, nil", got, err, want)
+			}
+		})
+	}
+}
+
+func TestGetPWStatusBytesErrors(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		response iso7816.Response
+		ioError  error
+		want     error
+	}{
+		{name: "unavailable", response: iso7816.Response{Status: 0x6a88}},
+		{name: "transport", ioError: io.ErrUnexpectedEOF, want: io.ErrUnexpectedEOF},
+		{name: "malformed", response: iso7816.Response{Status: 0x9000, Data: []byte{1, 0xa0, 0xfe, 0xc0, 3, 2}}, want: protocol.ErrInvalidResponse},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c := newClient(t, step{command: []byte{0, 0xca, 0, 0xc4, 0}, response: test.response, err: test.ioError})
+
+			got, err := c.GetPWStatusBytes(t.Context())
+			if got != (protocol.PWStatusBytes{}) {
+				t.Errorf("password status bytes = %+v, want zero result", got)
+			}
+
+			if test.want != nil {
+				if !errors.Is(err, test.want) {
+					t.Errorf("error = %v, want %v", err, test.want)
+				}
+			} else {
+				var apdu *iso7816.APDUError
+				if !errors.As(err, &apdu) || apdu.StatusWord() != test.response.Status {
+					t.Errorf("error = %v, want APDU error %s", err, test.response.Status)
+				}
+			}
+		})
+	}
+}
+
 func TestPutPWStatusBytes(t *testing.T) {
 	for _, tt := range []struct {
 		name   string

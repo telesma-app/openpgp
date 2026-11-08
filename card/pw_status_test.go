@@ -13,6 +13,27 @@ import (
 	"github.com/telesma-app/openpgp/transport"
 )
 
+func TestGetPWStatusBytes(t *testing.T) {
+	data := []byte{1, 0xa0, 0xfe, 0xc0, 3, 2, 1}
+	d := newGetterTestDevice(t, protocol.PWStatusBytesObject, data)
+	want := protocol.PWStatusBytes{
+		PW1ValidForMultipleSignatures: true, PW1MaxLength: 32, ResettingCodeMaxLength: 254, PW3MaxLength: 64,
+		PW1PINBlock2: true, PW3PINBlock2: true, PW1Retries: 3, ResettingCodeRetries: 2, PW3Retries: 1,
+	}
+
+	got, err := d.GetPWStatusBytes(t.Context())
+	if err != nil || got != want {
+		t.Errorf("password status = %+v, %v; want %+v, nil", got, err, want)
+	}
+}
+
+func TestGetPWStatusBytesLifecycle(t *testing.T) {
+	checkOperationLifecycle(t, []byte{1, 0xa0, 0xfe, 0xc0, 3, 2, 1}, func(ctx context.Context, d *Device) error {
+		_, err := d.GetPWStatusBytes(ctx)
+		return err
+	})
+}
+
 func TestPutPWStatusBytesAuthentication(t *testing.T) {
 	cause := errors.New("password source failed")
 

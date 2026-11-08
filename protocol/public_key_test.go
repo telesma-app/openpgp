@@ -127,13 +127,15 @@ func TestParsePublicKeyMalformed(t *testing.T) {
 	modulus[0], modulus[255] = 0x80, 1
 	modulusDO := bertlv.Append(nil, 0x81, modulus)
 
-	validRSA := bertlv.Append(modulusDO, 0x82, []byte{1, 0, 1})
+	validRSA := bertlv.Append(bytes.Clone(modulusDO), 0x82, []byte{1, 0, 1})
 	for name, fields := range map[string][]byte{
 		"missing exponent":  modulusDO,
-		"even exponent":     bertlv.Append(modulusDO, 0x82, []byte{2}),
-		"exponent width":    bertlv.Append(modulusDO, 0x82, []byte{1, 0, 0, 0, 1}),
-		"duplicate modulus": bertlv.Append(validRSA, 0x81, modulus),
-		"mixed ECC":         bertlv.Append(validRSA, 0x86, []byte{4}),
+		"exponent one":      bertlv.Append(bytes.Clone(modulusDO), 0x82, []byte{1}),
+		"exponent two":      bertlv.Append(bytes.Clone(modulusDO), 0x82, []byte{2}),
+		"even exponent":     bertlv.Append(bytes.Clone(modulusDO), 0x82, []byte{4}),
+		"exponent width":    bertlv.Append(bytes.Clone(modulusDO), 0x82, []byte{1, 0, 0, 0, 1}),
+		"duplicate modulus": bertlv.Append(bytes.Clone(validRSA), 0x81, modulus),
+		"mixed ECC":         bertlv.Append(bytes.Clone(validRSA), 0x86, []byte{4}),
 		"truncated modulus": {0x81, 3, 0, 1},
 	} {
 		t.Run(name, func(t *testing.T) {

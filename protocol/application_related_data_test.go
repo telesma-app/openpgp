@@ -68,8 +68,18 @@ func TestApplicationRelatedData(t *testing.T) {
 		t.Errorf("password status = %+v, want %+v", got.PWStatusBytes, wantStatus)
 	}
 
-	if got.Fingerprints[2][19] != 0xa5 || got.CAFingerprints[0][0] != 0x5a || !reflect.DeepEqual(got.KeyGenerationTimes, []uint32{1, 1700000000, 0xffffffff}) {
-		t.Errorf("fingerprints/times = %+v / %+v / %+v", got.Fingerprints, got.CAFingerprints, got.KeyGenerationTimes)
+	fingerprint := [20]byte(fingerprints[:20])
+	if !reflect.DeepEqual(got.Fingerprints, [][20]byte{fingerprint, fingerprint, fingerprint}) {
+		t.Errorf("fingerprints = %x, want three %x entries", got.Fingerprints, fingerprint)
+	}
+
+	caFingerprint := [20]byte(caFingerprints[:20])
+	if !reflect.DeepEqual(got.CAFingerprints, [][20]byte{caFingerprint, caFingerprint, caFingerprint}) {
+		t.Errorf("CA fingerprints = %x, want three %x entries", got.CAFingerprints, caFingerprint)
+	}
+
+	if !reflect.DeepEqual(got.KeyGenerationTimes, []uint32{1, 1700000000, 0xffffffff}) {
+		t.Errorf("key generation times = %+v", got.KeyGenerationTimes)
 	}
 
 	if got.HistoricalBytes == nil || got.HistoricalBytes.CardCapabilities == nil ||
@@ -98,6 +108,109 @@ func TestApplicationRelatedDataOmittedFields(t *testing.T) {
 	if got.ExtendedCapabilities != nil || got.PWStatusBytes != nil || got.SignatureAlgorithmAttributes.Algorithm != 0 ||
 		got.HistoricalBytes != nil || got.ExtendedLengthInformation != nil || got.GeneralFeatureManagement != nil {
 		t.Errorf("missing optional fields = %+v", got)
+	}
+
+	if got.Fingerprints != nil || got.CAFingerprints != nil {
+		t.Errorf("omitted fingerprints = %x / %x, want nil lists", got.Fingerprints, got.CAFingerprints)
+	}
+}
+
+func TestApplicationRelatedDataFingerprints(t *testing.T) {
+	const (
+		fingerprintWire = "SIG fingerprint 0001" + "DEC fingerprint 0002" +
+			"AUT fingerprint 0003" + "VND fingerprint 0004"
+		caFingerprintWire = "CA SIG fingerprint 1" + "CA DEC fingerprint 2" +
+			"CA AUT fingerprint 3" + "CA VND fingerprint 4"
+	)
+
+	for _, test := range []struct {
+		name   string
+		length int
+		count  int
+	}{
+		{name: "standard slots", length: 60, count: 3},
+		{name: "vendor slot", length: 80, count: 4},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			discretionary := bertlv.Append(nil, 0xc5, []byte(fingerprintWire[:test.length]))
+			discretionary = bertlv.Append(discretionary, 0xc6, []byte(caFingerprintWire[:test.length]))
+			data := bertlv.Append(nil, 0x4f, []byte{0xd2, 0x76, 0, 1, 0x24, 1, 3, 4, 0, 6, 0, 0, 0, 0, 0, 0})
+			data = bertlv.Append(data, 0x73, discretionary)
+			wantFingerprints := [][20]byte{
+				[20]byte([]byte("SIG fingerprint 0001")),
+				[20]byte([]byte("DEC fingerprint 0002")),
+				[20]byte([]byte("AUT fingerprint 0003")),
+				[20]byte([]byte("VND fingerprint 0004")),
+			}
+			wantCAFingerprints := [][20]byte{
+				[20]byte([]byte("CA SIG fingerprint 1")),
+				[20]byte([]byte("CA DEC fingerprint 2")),
+				[20]byte([]byte("CA AUT fingerprint 3")),
+				[20]byte([]byte("CA VND fingerprint 4")),
+			}
+
+			got, err := protocol.ParseApplicationRelatedData(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !reflect.DeepEqual(got.Fingerprints, wantFingerprints[:test.count]) {
+				t.Errorf("fingerprints = %x, want %x", got.Fingerprints, wantFingerprints[:test.count])
+			}
+
+			if !reflect.DeepEqual(got.CAFingerprints, wantCAFingerprints[:test.count]) {
+				t.Errorf("CA fingerprints = %x, want %x", got.CAFingerprints, wantCAFingerprints[:test.count])
+			}
+		})
+	}
+}
+
+func TestApplicationRelatedDataUnspecifiedFingerprints(t *testing.T) {
+	discretionary := bertlv.Append(nil, 0xc5, make([]byte, 60))
+	discretionary = bertlv.Append(discretionary, 0xc6, make([]byte, 60))
+	data := bertlv.Append(nil, 0x4f, []byte{0xd2, 0x76, 0, 1, 0x24, 1, 3, 4, 0, 6, 0, 0, 0, 0, 0, 0})
+	data = bertlv.Append(data, 0x73, discretionary)
+	want := make([][20]byte, 3)
+
+	got, err := protocol.ParseApplicationRelatedData(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(got.Fingerprints, want) || !reflect.DeepEqual(got.CAFingerprints, want) {
+		t.Errorf("unspecified fingerprints = %x / %x, want three zero entries in each list", got.Fingerprints, got.CAFingerprints)
+	}
+}
+
+func TestApplicationRelatedDataFingerprintLengths(t *testing.T) {
+	for _, object := range []struct {
+		name string
+		tag  uint32
+	}{
+		{name: "fingerprints", tag: 0xc5},
+		{name: "CA fingerprints", tag: 0xc6},
+	} {
+		t.Run(object.name, func(t *testing.T) {
+			for _, test := range []struct {
+				name   string
+				length int
+			}{
+				{name: "empty"},
+				{name: "below minimum", length: 40},
+				{name: "partial entry", length: 61},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					discretionary := bertlv.Append(nil, object.tag, make([]byte, test.length))
+					data := bertlv.Append(nil, 0x4f, []byte{0xd2, 0x76, 0, 1, 0x24, 1, 3, 4, 0, 6, 0, 0, 0, 0, 0, 0})
+					data = bertlv.Append(data, 0x73, discretionary)
+
+					_, err := protocol.ParseApplicationRelatedData(data)
+					if !errors.Is(err, protocol.ErrInvalidResponse) {
+						t.Errorf("error = %v, want ErrInvalidResponse", err)
+					}
+				})
+			}
+		})
 	}
 }
 
@@ -128,15 +241,19 @@ func TestApplicationRelatedDataPresentEmptyMetadata(t *testing.T) {
 func TestApplicationRelatedDataMalformed(t *testing.T) {
 	aid := []byte{0xd2, 0x76, 0, 1, 0x24, 1, 3, 4, 0, 6, 0, 0, 0, 0, 0, 0}
 
+	withFields := func(fields []byte) []byte {
+		return append(bertlv.Append(nil, 0x4f, aid), fields...)
+	}
+
 	withDiscretionary := func(data []byte) []byte {
-		return bertlv.Append(bertlv.Append(nil, 0x4f, aid), 0x73, data)
+		return bertlv.Append(withFields(nil), 0x73, data)
 	}
 	for name, data := range map[string][]byte{
 		"empty response":            {},
 		"missing AID":               {0x6e, 0},
-		"trailing outer data":       {0x6e, 0, 0x73, 0},
-		"truncated TLV":             {0x73, 2, 0xc0},
-		"duplicate discretionary":   {0x73, 0, 0x73, 0},
+		"trailing outer data":       append(bertlv.Append(nil, 0x6e, withFields(nil)), 0x73, 0),
+		"truncated TLV":             withFields([]byte{0x73, 2, 0xc0}),
+		"duplicate discretionary":   withFields([]byte{0x73, 0, 0x73, 0}),
 		"short AID":                 {0x4f, 1, 0xd2},
 		"wrong AID":                 bertlv.Append(nil, 0x4f, make([]byte, 16)),
 		"short capabilities":        withDiscretionary([]byte{0xc0, 1, 0}),

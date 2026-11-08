@@ -22,6 +22,11 @@ import (
 	"github.com/telesma-app/openpgp/protocol"
 )
 
+const (
+	ed25519RFC8032PublicHex    = "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c"
+	ed25519RFC8032SignatureHex = "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00"
+)
+
 func TestPrivateKeyRSASigner(t *testing.T) {
 	software, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -156,8 +161,8 @@ func TestPrivateKeyECDSAConvertsAndVerifiesSignature(t *testing.T) {
 func TestPrivateKeyEd25519RFC8032(t *testing.T) {
 	// RFC 8032, Section 7.1, TEST 2. The input is a one-byte message,
 	// not its digest and not an Ed25519ph prehash.
-	public := ed25519.PublicKey(unhex(t, "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c"))
-	want := unhex(t, "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00")
+	public := ed25519.PublicKey(unhex(t, ed25519RFC8032PublicHex))
+	want := unhex(t, ed25519RFC8032SignatureHex)
 	d := New(&exchangeTransport{exchange: func(_ context.Context, command iso7816.Command) (iso7816.Response, error) {
 		if command.INS != 0x2a || !bytes.Equal(command.Data, []byte{0x72}) {
 			t.Errorf("Ed25519 command = %+v", command)
@@ -177,6 +182,70 @@ func TestPrivateKeyEd25519RFC8032(t *testing.T) {
 
 	if !bytes.Equal(signature, want) {
 		t.Errorf("signature = %x, want %x", signature, want)
+	}
+}
+
+func TestPrivateKeyEd25519RejectsInvalidSignature(t *testing.T) {
+	// Derive invalid responses from RFC 8032, Section 7.1, TEST 2.
+	// The different public key is from TEST 1 in the same section.
+	for _, test := range []struct {
+		name         string
+		publicHex    string
+		messageHex   string
+		signatureHex string
+	}{
+		{
+			name: "tampered signature", publicHex: ed25519RFC8032PublicHex, messageHex: "72",
+			signatureHex: "93" + ed25519RFC8032SignatureHex[2:],
+		},
+		{
+			name: "different public key", messageHex: "72", signatureHex: ed25519RFC8032SignatureHex,
+			publicHex: "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		},
+		{
+			name: "different message", publicHex: ed25519RFC8032PublicHex, messageHex: "73",
+			signatureHex: ed25519RFC8032SignatureHex,
+		},
+		{
+			name: "empty signature", publicHex: ed25519RFC8032PublicHex, messageHex: "72",
+		},
+		{
+			name: "short signature", publicHex: ed25519RFC8032PublicHex, messageHex: "72",
+			signatureHex: ed25519RFC8032SignatureHex[:len(ed25519RFC8032SignatureHex)-2],
+		},
+		{
+			name: "long signature", publicHex: ed25519RFC8032PublicHex, messageHex: "72",
+			signatureHex: ed25519RFC8032SignatureHex + "00",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			public := ed25519.PublicKey(unhex(t, test.publicHex))
+			message := unhex(t, test.messageHex)
+			response := unhex(t, test.signatureHex)
+			calls := 0
+			d := New(&exchangeTransport{exchange: func(_ context.Context, command iso7816.Command) (iso7816.Response, error) {
+				calls++
+
+				if command.INS != 0x2a || command.P1 != 0x9e || command.P2 != 0x9a || !bytes.Equal(command.Data, message) {
+					t.Errorf("Ed25519 command = %+v, want PSO: COMPUTE DIGITAL SIGNATURE with message %x", command, message)
+				}
+
+				return success(response), nil
+			}})
+
+			t.Cleanup(func() { _ = d.Close() })
+
+			key := &PrivateKey{device: d, templateTag: protocol.DigitalSignatureTemplateTag, publicKey: public}
+
+			signature, err := key.Sign(t.Context(), message, crypto.Hash(0), nil)
+			if !errors.Is(err, protocol.ErrInvalidResponse) || signature != nil {
+				t.Errorf("Sign = %x, %v, want invalid response and nil signature", signature, err)
+			}
+
+			if calls != 1 {
+				t.Errorf("exchange calls = %d, want 1", calls)
+			}
+		})
 	}
 }
 
