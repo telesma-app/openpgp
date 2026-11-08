@@ -114,7 +114,7 @@ func staticResponse(
 	return iso7816.Response{Data: data, Status: status}
 }
 
-func recordHex(t testing.TB, text string) []byte {
+func decodeHex(t testing.TB, text string) []byte {
 	t.Helper()
 
 	data, err := hex.DecodeString(text)
@@ -133,4 +133,32 @@ func recordKeys(size int) Keys {
 	}
 
 	return keys
+}
+
+func rotatedKeys(size int) Keys {
+	keys := recordKeys(size)
+	for i := range size {
+		keys.ENC[i] ^= 0x40
+		keys.MAC[i] ^= 0x40
+	}
+
+	return keys
+}
+
+func keyRotationCommand(object protocol.Object, keys Keys) iso7816.Command {
+	command := iso7816.Command{INS: byte(protocol.PutData), P2: byte(object), Le: 256}
+	switch object {
+	case protocol.SMKeyENCObject:
+		command.Data = keys.ENC
+	case protocol.SMKeyMACObject:
+		command.Data = keys.MAC
+	case protocol.SMKeyContainerObject:
+		command.Data = append([]byte{0xd1, byte(len(keys.ENC))}, keys.ENC...)
+		command.Data = append(command.Data, 0xd2, byte(len(keys.MAC)))
+		command.Data = append(command.Data, keys.MAC...)
+	default:
+		panic("unexpected key object")
+	}
+
+	return command
 }

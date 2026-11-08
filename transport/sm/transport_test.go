@@ -8,9 +8,9 @@ import (
 	"slices"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/telesma-app/iso7816"
-	"github.com/telesma-app/openpgp/client"
 	"github.com/telesma-app/openpgp/protocol"
 	"github.com/telesma-app/openpgp/transport"
 )
@@ -198,28 +198,6 @@ func TestExchangeRejectsUnsupportedCommandsBeforeChallenge(t *testing.T) {
 	}
 }
 
-func TestSelectDataUsesItsDefinedPlaintextCommand(t *testing.T) {
-	p := newStaticPeer()
-	channel := openStaticPeer(t, p, staticParameters(16))
-	p.effect = func(_ context.Context, command iso7816.Command) (iso7816.Response, error) {
-		if command.CLA != 0 || command.INS != 0xa5 || command.P1 != 1 || command.P2 != 4 ||
-			!bytes.Equal(command.Data, []byte{0x60, 4, 0x5c, 2, 0x7f, 0x21}) {
-			t.Fatalf("SELECT DATA = %+v", command)
-		}
-
-		return iso7816.Response{Status: 0x9000}, nil
-	}
-
-	err := client.NewClient(channel).SelectData(t.Context(), protocol.CardholderCertificateObject, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(p.requests) != 1 || !channel.isOpen() {
-		t.Fatal("SELECT DATA requested a challenge or retired the connection")
-	}
-}
-
 func TestChallengeFailureDoesNotSendProtectedCommand(t *testing.T) {
 	for _, mode := range []string{"rejected", "short", "long", "I/O", "interrupted"} {
 		t.Run(mode, func(t *testing.T) {
@@ -360,6 +338,156 @@ func TestProtectedResponseFailureInvalidatesConnection(t *testing.T) {
 				t.Fatalf("Exchange after invalidation = %v", err)
 			}
 		})
+	}
+}
+
+func TestQueuedExchangeCancellationPreservesActiveConnection(t *testing.T) {
+	for _, stage := range []string{"challenge", "protected command"} {
+		for _, test := range []struct {
+			name     string
+			deadline bool
+			want     error
+		}{
+			{name: "canceled", want: context.Canceled},
+			{name: "deadline", deadline: true, want: context.DeadlineExceeded},
+		} {
+			t.Run(stage+"/"+test.name, func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					p := newStaticPeer()
+					parameters := staticParameters(16)
+					channel := openStaticPeer(t, p, parameters)
+					release := make(chan struct{}, 1)
+
+					defer func() {
+						close(release)
+
+						_ = channel.Close()
+
+						synctest.Wait()
+					}()
+
+					blockedInstruction := byte(0x84)
+					wantRequests := 1
+
+					if stage == "protected command" {
+						blockedInstruction = 0xca
+						wantRequests = 2
+					}
+
+					rnd := [16]byte{1, 2, 3}
+					blockNext := true
+					p.effect = func(_ context.Context, command iso7816.Command) (iso7816.Response, error) {
+						if blockNext && command.INS == blockedInstruction {
+							blockNext = false
+
+							select {
+							case <-release:
+							case <-p.closed:
+								return iso7816.Response{}, io.ErrClosedPipe
+							}
+						}
+
+						if command.INS == 0x84 {
+							return iso7816.Response{Data: rnd[:], Status: 0x9000}, nil
+						}
+
+						return staticResponse(t, parameters.Keys, 8, rnd, command.INS, []byte("object data"), 0x9000), nil
+					}
+
+					type result struct {
+						response iso7816.Response
+						err      error
+					}
+
+					active := make(chan result, 1)
+
+					go func() {
+						response, err := channel.Exchange(t.Context(), staticReadCommand())
+						active <- result{response: response, err: err}
+					}()
+
+					synctest.Wait()
+
+					if len(p.requests) != wantRequests || blockNext {
+						t.Fatalf("active requests=%d, block pending=%t; want blocked %s", len(p.requests), blockNext, stage)
+					}
+
+					var (
+						ctx    context.Context
+						cancel context.CancelFunc
+					)
+
+					if test.deadline {
+						ctx, cancel = context.WithTimeout(t.Context(), time.Second)
+					} else {
+						ctx, cancel = context.WithCancel(t.Context())
+					}
+
+					defer cancel()
+
+					queued := make(chan result, 1)
+
+					go func() {
+						response, err := channel.Exchange(ctx, staticReadCommand())
+						queued <- result{response: response, err: err}
+					}()
+
+					synctest.Wait()
+
+					select {
+					case got := <-queued:
+						t.Fatalf("queued Exchange returned before cancellation: %+v, %v", got.response, got.err)
+					default:
+					}
+
+					if test.deadline {
+						time.Sleep(time.Second) // Advance the synctest clock after the waiter is blocked.
+					} else {
+						cancel()
+					}
+
+					synctest.Wait()
+
+					select {
+					case got := <-queued:
+						var invalidated *transport.DeviceInvalidatedError
+						if !errors.Is(got.err, test.want) || errors.As(got.err, &invalidated) || got.response.Data != nil || got.response.Status != 0 {
+							t.Errorf("queued Exchange = %+v, %v; want empty response and %v without invalidation", got.response, got.err, test.want)
+						}
+					default:
+						t.Fatal("queued Exchange did not finish after cancellation while the active exchange remained blocked")
+					}
+
+					if len(p.requests) != wantRequests || p.closeCalls != 0 || !channel.isOpen() {
+						t.Fatalf("queued cancellation sent %d requests and closed %d times", len(p.requests), p.closeCalls)
+					}
+
+					select {
+					case got := <-active:
+						t.Fatalf("active Exchange returned before release: %+v, %v", got.response, got.err)
+					default:
+					}
+
+					release <- struct{}{}
+
+					synctest.Wait()
+
+					select {
+					case got := <-active:
+						if got.err != nil || got.response.Status != 0x9000 || string(got.response.Data) != "object data" {
+							t.Errorf("active Exchange = %+v, %v; want successful object read", got.response, got.err)
+						}
+					default:
+						t.Fatal("active Exchange did not finish after release")
+					}
+
+					response, err := channel.Exchange(t.Context(), staticReadCommand())
+					if err != nil || response.Status != 0x9000 || string(response.Data) != "object data" || len(p.requests) != 4 || p.closeCalls != 0 {
+						t.Errorf("Exchange after cancellation = %+v, %v; requests=%d closes=%d", response, err, len(p.requests), p.closeCalls)
+					}
+				})
+			})
+		}
 	}
 }
 

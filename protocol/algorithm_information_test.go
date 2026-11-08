@@ -25,7 +25,7 @@ func TestAlgorithmInformation(t *testing.T) {
 		{name: "long FA length", data: "fa813e" + body},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			data := algorithmAttributesHex(t, tt.data)
+			data := decodeHex(t, tt.data)
 
 			got, err := protocol.ParseAlgorithmInformation(data)
 			if err != nil {
@@ -83,7 +83,7 @@ func TestAlgorithmInformation(t *testing.T) {
 func TestAlgorithmInformationRetainsProprietaryMetadataAndOrder(t *testing.T) {
 	const raw = "c30a132b0601040183b20301df200463010203c106010800002000"
 
-	got, err := protocol.ParseAlgorithmInformation(algorithmAttributesHex(t, raw))
+	got, err := protocol.ParseAlgorithmInformation(decodeHex(t, raw))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestAlgorithmInformationMalformedResponse(t *testing.T) {
 		{name: "object exceeds P1 P2", data: "5f81010163"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := protocol.ParseAlgorithmInformation(algorithmAttributesHex(t, tt.data))
+			_, err := protocol.ParseAlgorithmInformation(decodeHex(t, tt.data))
 			if !errors.Is(err, protocol.ErrInvalidResponse) {
 				t.Errorf("malformed information %s: error = %v", tt.data, err)
 			}

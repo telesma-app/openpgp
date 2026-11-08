@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	baseiso7816 "github.com/telesma-app/iso7816"
@@ -62,84 +63,110 @@ func TestQueuedExchangeCancellationPreservesActiveCard(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			card := &gatedCard{
-				requests: make(chan byte, 1),
-				release:  make(chan struct{}),
-				closed:   make(chan struct{}),
-			}
+			synctest.Test(t, func(t *testing.T) {
+				card := &gatedCard{
+					requests: make(chan byte, 1),
+					release:  make(chan struct{}),
+					closed:   make(chan struct{}),
+				}
 
-			device, err := Open(t.Context(), card)
-			if err != nil {
-				t.Fatal(err)
-			}
+				device, err := Open(t.Context(), card)
+				if err != nil {
+					t.Fatal(err)
+				}
 
-			active := make(chan error, 1)
+				activeCtx, cancelActive := context.WithCancel(t.Context())
 
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
+				defer func() {
+					cancelActive()
 
-				_, err := device.Exchange(t.Context(), baseiso7816.Command{INS: 0x20, P2: 0x81})
-				active <- err
-			}()
+					_ = device.Close()
 
-			t.Cleanup(func() {
-				_ = device.Close()
+					synctest.Wait()
+				}()
 
-				receive(t, done, "active Exchange did not stop")
+				active := make(chan error, 1)
+
+				go func() {
+					_, err := device.Exchange(activeCtx, baseiso7816.Command{INS: 0x20, P2: 0x81})
+					active <- err
+				}()
+
+				if instruction := receive(t, card.requests, "active Exchange did not start"); instruction != 0x20 {
+					t.Fatalf("instruction = %02x, want 20", instruction)
+				}
+
+				ctx, cancel := tc.ctx(t.Context())
+				defer cancel()
+
+				queued := make(chan error, 1)
+
+				go func() {
+					_, err := device.Exchange(ctx, baseiso7816.Command{INS: 0xca, P2: 0x6e, Le: 256})
+					queued <- err
+				}()
+
+				synctest.Wait()
+
+				select {
+				case err := <-queued:
+					t.Fatalf("queued Exchange returned before cancellation: %v", err)
+				default:
+				}
+
+				select {
+				case instruction := <-card.requests:
+					t.Fatalf("queued Exchange transmitted instruction %02x before cancellation", instruction)
+				default:
+				}
+
+				if tc.want == context.Canceled {
+					cancel()
+				} else {
+					// Advance virtual time only after the queued Exchange is blocked.
+					time.Sleep(10 * time.Millisecond)
+				}
+
+				err = receive(t, queued, "queued Exchange waited for active Exchange after cancellation")
+
+				var invalidated *openpgptransport.DeviceInvalidatedError
+				if !errors.Is(err, tc.want) || errors.As(err, &invalidated) {
+					t.Fatalf("queued Exchange = %v, want cancellation without invalidation", err)
+				}
+
+				select {
+				case <-card.closed:
+					t.Fatal("queued cancellation closed active card")
+				default:
+				}
+
+				select {
+				case instruction := <-card.requests:
+					t.Fatalf("queued Exchange transmitted instruction %02x", instruction)
+				default:
+				}
+
+				select {
+				case err := <-active:
+					t.Fatalf("active Exchange returned before release: %v", err)
+				default:
+				}
+
+				close(card.release)
+
+				if err := receive(t, active, "active Exchange did not finish"); err != nil {
+					t.Fatal(err)
+				}
+
+				response, err := device.Exchange(t.Context(), baseiso7816.Command{INS: 0x84, Le: 256})
+				if err != nil || response.Status != 0x9000 {
+					t.Fatalf("Exchange after queued cancellation = %s, %v; want success", response.Status, err)
+				}
+
+				if instruction := receive(t, card.requests, "reused card did not transmit"); instruction != 0x84 {
+					t.Errorf("instruction = %02x, want 84", instruction)
+				}
 			})
-
-			if instruction := receive(t, card.requests, "active Exchange did not start"); instruction != 0x20 {
-				t.Fatalf("instruction = %02x, want 20", instruction)
-			}
-
-			ctx, cancel := tc.ctx(t.Context())
-			defer cancel()
-
-			queued := make(chan error, 1)
-
-			go func() {
-				_, err := device.Exchange(ctx, baseiso7816.Command{INS: 0xca, P2: 0x6e, Le: 256})
-				queued <- err
-			}()
-
-			if tc.want == context.Canceled {
-				cancel()
-			}
-
-			err = receive(t, queued, "queued Exchange waited for active Exchange after cancellation")
-
-			var invalidated *openpgptransport.DeviceInvalidatedError
-			if !errors.Is(err, tc.want) || errors.As(err, &invalidated) {
-				t.Fatalf("queued Exchange = %v, want cancellation without invalidation", err)
-			}
-
-			select {
-			case <-card.closed:
-				t.Fatal("queued cancellation closed active card")
-			default:
-			}
-
-			select {
-			case instruction := <-card.requests:
-				t.Fatalf("queued Exchange transmitted instruction %02x", instruction)
-			default:
-			}
-
-			close(card.release)
-
-			if err := receive(t, active, "active Exchange did not finish"); err != nil {
-				t.Fatal(err)
-			}
-
-			response, err := device.Exchange(t.Context(), baseiso7816.Command{INS: 0x84, Le: 256})
-			if err != nil || response.Status != 0x9000 {
-				t.Fatalf("Exchange after queued cancellation = %s, %v; want success", response.Status, err)
-			}
-
-			if instruction := receive(t, card.requests, "reused card did not transmit"); instruction != 0x84 {
-				t.Errorf("instruction = %02x, want 84", instruction)
-			}
 		})
 	}
 }
@@ -158,37 +185,95 @@ func (c *delayedCloseCard) Close() error {
 }
 
 func TestCloseReleasesQueuedExchangeBeforeCardCloseCompletes(t *testing.T) {
-	card := &delayedCloseCard{
-		gatedCard: gatedCard{
-			requests: make(chan byte, 1),
-			release:  make(chan struct{}),
-			closed:   make(chan struct{}),
-		},
-		closeStarted: make(chan struct{}),
-		finishClose:  make(chan struct{}),
-	}
+	synctest.Test(t, func(t *testing.T) {
+		card := &delayedCloseCard{
+			gatedCard: gatedCard{
+				requests: make(chan byte, 1),
+				release:  make(chan struct{}),
+				closed:   make(chan struct{}),
+			},
+			closeStarted: make(chan struct{}),
+			finishClose:  make(chan struct{}, 1),
+		}
 
-	device, err := Open(t.Context(), card)
-	if err != nil {
-		t.Fatal(err)
-	}
+		device, err := Open(t.Context(), card)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	activeCtx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+		activeCtx, cancel := context.WithCancel(t.Context())
 
-	active := make(chan error, 1)
+		defer func() {
+			close(card.finishClose)
+			cancel()
 
-	go func() {
-		_, err := device.Exchange(activeCtx, baseiso7816.Command{INS: 0x20, P2: 0x81})
-		active <- err
-	}()
+			_ = device.Close()
 
-	closed := make(chan error, 1)
+			synctest.Wait()
+		}()
 
-	t.Cleanup(func() {
-		close(card.finishClose)
+		active := make(chan error, 1)
 
-		_ = device.Close()
+		go func() {
+			_, err := device.Exchange(activeCtx, baseiso7816.Command{INS: 0x20, P2: 0x81})
+			active <- err
+		}()
+
+		receive(t, card.requests, "active Exchange did not start")
+
+		queued := make(chan error, 1)
+
+		go func() {
+			_, err := device.Exchange(t.Context(), baseiso7816.Command{INS: 0xca, P2: 0x6e, Le: 256})
+			queued <- err
+		}()
+
+		synctest.Wait()
+
+		select {
+		case err := <-queued:
+			t.Fatalf("queued Exchange returned before Close: %v", err)
+		default:
+		}
+
+		select {
+		case instruction := <-card.requests:
+			t.Fatalf("queued Exchange transmitted instruction %02x before Close", instruction)
+		default:
+		}
+
+		closed := make(chan error, 1)
+
+		go func() { closed <- device.Close() }()
+
+		receive(t, card.closeStarted, "Close waited for active Exchange")
+
+		err = receive(t, queued, "queued Exchange waited for card Close to complete")
+
+		var invalidated *openpgptransport.DeviceInvalidatedError
+		if !errors.Is(err, io.ErrClosedPipe) || errors.As(err, &invalidated) {
+			t.Fatalf("queued Exchange = %v, want closed pipe without invalidation", err)
+		}
+
+		select {
+		case instruction := <-card.requests:
+			t.Fatalf("queued Exchange transmitted instruction %02x", instruction)
+		default:
+		}
+
+		select {
+		case err := <-active:
+			t.Fatalf("active Exchange returned before card Close completed: %v", err)
+		default:
+		}
+
+		select {
+		case err := <-closed:
+			t.Fatalf("Close returned before card Close completed: %v", err)
+		default:
+		}
+
+		card.finishClose <- struct{}{}
 
 		if err := receive(t, closed, "Close did not finish after card was released"); err != nil {
 			t.Error(err)
@@ -198,30 +283,6 @@ func TestCloseReleasesQueuedExchangeBeforeCardCloseCompletes(t *testing.T) {
 			t.Errorf("active Exchange = %v, want closed pipe", err)
 		}
 	})
-	receive(t, card.requests, "active Exchange did not start")
-
-	queued := make(chan error, 1)
-
-	go func() {
-		_, err := device.Exchange(t.Context(), baseiso7816.Command{INS: 0xca, P2: 0x6e, Le: 256})
-		queued <- err
-	}()
-	go func() { closed <- device.Close() }()
-
-	receive(t, card.closeStarted, "Close waited for active Exchange")
-
-	err = receive(t, queued, "queued Exchange waited for card Close to complete")
-
-	var invalidated *openpgptransport.DeviceInvalidatedError
-	if !errors.Is(err, io.ErrClosedPipe) || errors.As(err, &invalidated) {
-		t.Fatalf("queued Exchange = %v, want closed pipe without invalidation", err)
-	}
-
-	select {
-	case instruction := <-card.requests:
-		t.Fatalf("queued Exchange transmitted instruction %02x", instruction)
-	default:
-	}
 }
 
 func TestExchangeAfterCloseDoesNotTransmit(t *testing.T) {
@@ -430,17 +491,87 @@ func TestCloseInterruptsExchange(t *testing.T) {
 	}
 }
 
-func receive[T any](t testing.TB, ch <-chan T, failure string) T {
-	t.Helper()
+func TestNewTakesOwnershipWithoutIO(t *testing.T) {
+	raw := newFakeCard(t, nil)
 
-	select {
-	case value := <-ch:
-		return value
-	case <-time.After(time.Second):
-		t.Fatal(failure)
+	connection := New(raw)
+	if raw.closeCalls != 0 {
+		t.Fatal("New closed the card")
+	}
 
-		var zero T
+	if err := connection.Close(); err != nil {
+		t.Fatal(err)
+	}
 
-		return zero
+	if err := connection.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := connection.Exchange(t.Context(), baseiso7816.Command{INS: 0xcb}); !errors.Is(err, io.ErrClosedPipe) {
+		t.Errorf("exchange after Close = %v, want closed pipe without I/O", err)
+	}
+
+	if raw.closeCalls != 1 {
+		t.Errorf("card Close calls = %d, want 1", raw.closeCalls)
+	}
+}
+
+func TestExchangeStopsAfterRejectedFragment(t *testing.T) {
+	data := bytes.Repeat([]byte{0xab}, 256)
+	device, card := newTransport(t, exchange{
+		request: append([]byte{0x10, 0xda, 0x00, 0x5e, 0xfb}, data[:251]...), response: []byte{0x69, 0x82},
+	})
+	_, err := device.Exchange(t.Context(), baseiso7816.Command{INS: 0xda, P2: 0x5e, Data: data})
+
+	var apduError *baseiso7816.APDUError
+	if !errors.As(err, &apduError) || apduError.StatusWord() != 0x6982 {
+		t.Fatalf("Exchange = %v, want APDU error 6982", err)
+	}
+
+	var invalidated *openpgptransport.DeviceInvalidatedError
+	if errors.As(err, &invalidated) || card.closeCalls != 0 {
+		t.Fatal("rejected fragment invalidated the card")
+	}
+
+	card.exchanges = append(card.exchanges, exchange{
+		request: []byte{0x00, 0x20, 0x00, 0x81}, response: []byte{0x63, 0xc3},
+	})
+
+	response, err := device.Exchange(t.Context(), baseiso7816.Command{INS: 0x20, P2: 0x81})
+	if err != nil || response.Status != 0x63c3 {
+		t.Fatalf("Exchange after rejection = %s, %v; want status 63c3", response.Status, err)
+	}
+}
+
+func TestPreCanceledExchangePreservesCard(t *testing.T) {
+	device, card := newTransport(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err := device.Exchange(ctx, baseiso7816.Command{INS: 0x20, P2: 0x81})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Exchange = %v, want context cancellation", err)
+	}
+
+	var invalidated *openpgptransport.DeviceInvalidatedError
+	if errors.As(err, &invalidated) || card.closeCalls != 0 {
+		t.Fatal("pre-cancellation invalidated card")
+	}
+}
+
+func TestExchangeRejectsOversizedResponse(t *testing.T) {
+	response := append(bytes.Repeat([]byte{0xab}, 65537), 0x90, 0x00)
+	device, card := newTransport(t, exchange{
+		request: []byte{0x00, 0xca, 0x00, 0x6e, 0x00}, response: response,
+	})
+	_, err := device.Exchange(t.Context(), baseiso7816.Command{INS: 0xca, P2: 0x6e, Le: 256})
+
+	var invalidated *openpgptransport.DeviceInvalidatedError
+	if !errors.Is(err, baseiso7816.ErrResponseTooLarge) || !errors.As(err, &invalidated) {
+		t.Fatalf("Exchange = %v, want oversized response and invalidation", err)
+	}
+
+	if card.closeCalls != 1 {
+		t.Errorf("Close calls = %d, want 1", card.closeCalls)
 	}
 }

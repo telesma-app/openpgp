@@ -52,14 +52,14 @@ func TestEncodeAlgorithmAttributes(t *testing.T) {
 		{
 			name: "ECDSA P256 private key",
 			attributes: protocol.AlgorithmAttributes{
-				Algorithm: protocol.ECDSA, CurveOID: algorithmAttributesHex(t, "2a8648ce3d030107"),
+				Algorithm: protocol.ECDSA, CurveOID: decodeHex(t, "2a8648ce3d030107"),
 			},
 			want: "132a8648ce3d030107",
 		},
 		{
 			name: "ECDSA P256 with public key",
 			attributes: protocol.AlgorithmAttributes{
-				Algorithm: protocol.ECDSA, CurveOID: algorithmAttributesHex(t, "2a8648ce3d030107"),
+				Algorithm: protocol.ECDSA, CurveOID: decodeHex(t, "2a8648ce3d030107"),
 				ImportFormat: protocol.ImportFormatStandardWithPublicKey,
 			},
 			want: "132a8648ce3d030107ff",
@@ -67,14 +67,14 @@ func TestEncodeAlgorithmAttributes(t *testing.T) {
 		{
 			name: "ECDH P384 private key",
 			attributes: protocol.AlgorithmAttributes{
-				Algorithm: protocol.ECDH, CurveOID: algorithmAttributesHex(t, "2b81040022"),
+				Algorithm: protocol.ECDH, CurveOID: decodeHex(t, "2b81040022"),
 			},
 			want: "122b81040022",
 		},
 		{
 			name: "ECDH P384 with public key",
 			attributes: protocol.AlgorithmAttributes{
-				Algorithm: protocol.ECDH, CurveOID: algorithmAttributesHex(t, "2b81040022"),
+				Algorithm: protocol.ECDH, CurveOID: decodeHex(t, "2b81040022"),
 				ImportFormat: protocol.ImportFormatStandardWithPublicKey,
 			},
 			want: "122b81040022ff",
@@ -82,14 +82,14 @@ func TestEncodeAlgorithmAttributes(t *testing.T) {
 		{
 			name: "EdDSA private key",
 			attributes: protocol.AlgorithmAttributes{
-				Algorithm: protocol.EdDSA, CurveOID: algorithmAttributesHex(t, "2b06010401da470f01"),
+				Algorithm: protocol.EdDSA, CurveOID: decodeHex(t, "2b06010401da470f01"),
 			},
 			want: "162b06010401da470f01",
 		},
 		{
 			name: "EdDSA with public key",
 			attributes: protocol.AlgorithmAttributes{
-				Algorithm: protocol.EdDSA, CurveOID: algorithmAttributesHex(t, "2b06010401da470f01"),
+				Algorithm: protocol.EdDSA, CurveOID: decodeHex(t, "2b06010401da470f01"),
 				ImportFormat: protocol.ImportFormatStandardWithPublicKey,
 			},
 			want: "162b06010401da470f01ff",
@@ -140,7 +140,7 @@ func TestEncodeAlgorithmAttributesUsesEditedFields(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			data := algorithmAttributesHex(t, tt.raw)
+			data := decodeHex(t, tt.raw)
 
 			attributes, err := protocol.ParseAlgorithmAttributes(data)
 			if err != nil {
@@ -183,15 +183,4 @@ func TestEncodeUnknownAlgorithmAttributesPreservesRawValue(t *testing.T) {
 	if !bytes.Equal(data, []byte{0x63, 0x01, 0xff, 0x00, 0x7f}) || !bytes.Equal(attributes.Raw, data) {
 		t.Error("clearing encoded unknown attributes changed the borrowed response")
 	}
-}
-
-func algorithmAttributesHex(t testing.TB, encoded string) []byte {
-	t.Helper()
-
-	data, err := hex.DecodeString(encoded)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return data
 }

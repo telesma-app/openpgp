@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"encoding/hex"
 	"errors"
 	"math/big"
 	"testing"
@@ -38,22 +37,11 @@ var brainpoolPublicKeyVectors = []struct {
 	},
 }
 
-func decodePublicKeyHex(t testing.TB, encoded string) []byte {
-	t.Helper()
-
-	data, err := hex.DecodeString(encoded)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return data
-}
-
 func TestParseBrainpoolPublicKeys(t *testing.T) {
 	for _, vector := range brainpoolPublicKeyVectors {
 		t.Run(vector.name, func(t *testing.T) {
-			oid := decodePublicKeyHex(t, vector.oid)
-			point := decodePublicKeyHex(t, "04"+vector.x+vector.y)
+			oid := decodeHex(t, vector.oid)
+			point := decodeHex(t, "04"+vector.x+vector.y)
 			data := bertlv.Append(nil, 0x7f49, bertlv.Append(nil, 0x86, point))
 
 			for _, tc := range []struct {
@@ -107,7 +95,7 @@ func TestParseBrainpoolPublicKeys(t *testing.T) {
 func TestParseBrainpoolPublicKeyRejectsInvalidPoint(t *testing.T) {
 	for _, vector := range brainpoolPublicKeyVectors {
 		t.Run(vector.name, func(t *testing.T) {
-			point := decodePublicKeyHex(t, "04"+vector.x+vector.y)
+			point := decodeHex(t, "04"+vector.x+vector.y)
 			offCurve := make([]byte, len(point))
 			offCurve[0] = 4
 			wrongPrefix := bytes.Clone(point)
@@ -121,7 +109,7 @@ func TestParseBrainpoolPublicKeyRejectsInvalidPoint(t *testing.T) {
 				t.Run(name, func(t *testing.T) {
 					for _, algorithm := range []protocol.Algorithm{protocol.ECDSA, protocol.ECDH} {
 						_, err := protocol.ParsePublicKey(protocol.AlgorithmAttributes{
-							Algorithm: algorithm, CurveOID: decodePublicKeyHex(t, vector.oid),
+							Algorithm: algorithm, CurveOID: decodeHex(t, vector.oid),
 						}, bertlv.Append(nil, 0x7f49, bertlv.Append(nil, 0x86, invalid)))
 						if !errors.Is(err, protocol.ErrInvalidResponse) {
 							t.Errorf("invalid Brainpool point: error = %v", err)
@@ -136,15 +124,15 @@ func TestParseBrainpoolPublicKeyRejectsInvalidPoint(t *testing.T) {
 func TestParseBrainpoolPublicKeyRejectsNoncanonicalCoordinates(t *testing.T) {
 	// RFC 5639, Sec. 3.4: Gy + P fits in 32 bytes but is noncanonical.
 	// IsOnCurve's coordinate reduction must not make this encoding acceptable.
-	point := decodePublicKeyHex(t, "048bd2aeb9cb7e57cb2c4b482ffc81b7afb9de27e1e3bd23c23a4453bd9ace3262547ef835c3dac4fd97f8461a14611dc9c27745132ded8e545c1d54c72f046997")
-	p := new(big.Int).SetBytes(decodePublicKeyHex(t, "a9fb57dba1eea9bc3e660a909d838d726e3bf623d52620282013481d1f6e5377"))
+	point := decodeHex(t, "048bd2aeb9cb7e57cb2c4b482ffc81b7afb9de27e1e3bd23c23a4453bd9ace3262547ef835c3dac4fd97f8461a14611dc9c27745132ded8e545c1d54c72f046997")
+	p := new(big.Int).SetBytes(decodeHex(t, "a9fb57dba1eea9bc3e660a909d838d726e3bf623d52620282013481d1f6e5377"))
 	y := new(big.Int).SetBytes(point[33:])
 	y.Add(y, p)
 	y.FillBytes(point[33:])
 
 	for _, algorithm := range []protocol.Algorithm{protocol.ECDSA, protocol.ECDH} {
 		_, err := protocol.ParsePublicKey(protocol.AlgorithmAttributes{
-			Algorithm: algorithm, CurveOID: decodePublicKeyHex(t, "2b2403030208010107"),
+			Algorithm: algorithm, CurveOID: decodeHex(t, "2b2403030208010107"),
 		}, bertlv.Append(nil, 0x7f49, bertlv.Append(nil, 0x86, point)))
 		if !errors.Is(err, protocol.ErrInvalidResponse) {
 			t.Errorf("noncanonical Brainpool coordinate: error = %v", err)

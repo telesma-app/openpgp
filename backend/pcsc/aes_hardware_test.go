@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
-	"encoding/hex"
 	"errors"
 	"os"
 	"testing"
@@ -36,8 +35,8 @@ func TestHardwareAES(t *testing.T) {
 		t.Fatal("OPENPGP_TEST_READER must name one exact reader")
 	}
 
-	password := hardwareAESPassword(t, "OPENPGP_TEST_PW1_HEX")
-	adminPassword := hardwareAESPassword(t, "OPENPGP_TEST_PW3_HEX")
+	password := hardwarePassword(t, "OPENPGP_TEST_PW1_HEX")
+	adminPassword := hardwarePassword(t, "OPENPGP_TEST_PW3_HEX")
 
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
@@ -65,7 +64,7 @@ func TestHardwareAES(t *testing.T) {
 		t.Skip("card does not announce PSO:ENCIPHER/DECIPHER AES support")
 	}
 
-	verifyHardwareAESCredentials(t, ctx, device, password, adminPassword)
+	verifyHardwareCredentials(t, ctx, device, password, adminPassword)
 
 	cleanup = func() {
 		if err := device.Close(); err != nil {
@@ -100,7 +99,7 @@ func TestHardwareAES(t *testing.T) {
 			}
 
 			device = card.New(connection, client.WithExtendedLength())
-			verifyHardwareAESCredentials(t, ctx, device, password, adminPassword)
+			verifyHardwareCredentials(t, ctx, device, password, adminPassword)
 		}
 
 		if !t.Run(mode.name, func(t *testing.T) {
@@ -182,37 +181,6 @@ func TestHardwareAES(t *testing.T) {
 		}) {
 			return
 		}
-	}
-}
-
-func hardwareAESPassword(t testing.TB, variable string) []byte {
-	t.Helper()
-
-	encoded := os.Getenv(variable)
-	if encoded == "" {
-		t.Fatalf("%s must contain an explicitly configured password as hexadecimal bytes", variable)
-	}
-
-	password, err := hex.DecodeString(encoded)
-	if err != nil {
-		clear(password)
-		t.Fatalf("%s must contain valid hexadecimal bytes", variable)
-	}
-
-	t.Cleanup(func() { clear(password) })
-
-	return password
-}
-
-func verifyHardwareAESCredentials(t testing.TB, ctx context.Context, device *card.Device, password, adminPassword []byte) {
-	t.Helper()
-
-	if err := device.Verify(ctx, protocol.PW3, adminPassword); err != nil {
-		t.Fatalf("verify configured PW3: %v", err)
-	}
-
-	if err := device.Verify(ctx, protocol.PW1, password); err != nil {
-		t.Fatalf("verify configured PW1: %v", err)
 	}
 }
 

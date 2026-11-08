@@ -223,10 +223,10 @@ func TestEncodeX25519KeyImportRFC7748(t *testing.T) {
 
 	const publicHex = "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"
 
-	private := curve25519ImportHex(t, privateHex)
+	private := decodeHex(t, privateHex)
 	defer clear(private)
 
-	public := curve25519ImportHex(t, publicHex)
+	public := decodeHex(t, publicHex)
 
 	key, err := ecdh.X25519().NewPrivateKey(private)
 	if err != nil {
@@ -257,7 +257,7 @@ func TestEncodeX25519KeyImportRFC7748(t *testing.T) {
 				},
 			} {
 				t.Run(format.name, func(t *testing.T) {
-					want := curve25519ImportHex(t, format.wire)
+					want := decodeHex(t, format.wire)
 					defer clear(want)
 
 					got, err := EncodeKeyImport(ControlReferenceTemplate{Tag: ConfidentialityTemplateTag}, AlgorithmAttributes{

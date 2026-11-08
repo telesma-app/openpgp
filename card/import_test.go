@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"errors"
 	"io"
 	"testing"
 	"testing/synctest"
 
-	"github.com/telesma-app/bertlv"
 	"github.com/telesma-app/iso7816"
 	"github.com/telesma-app/openpgp/protocol"
 	"github.com/telesma-app/openpgp/transport"
@@ -46,7 +46,7 @@ func TestImportKeepsAttributesAndReplacementTogether(t *testing.T) {
 				close(attributesStarted)
 				<-continueAttributes
 
-				return success(importTestApplication(currentAttributes)), nil
+				return success(authenticationKeyApplication(currentAttributes)), nil
 			case byte(protocol.PutDataOdd):
 				if command.P1 != 0x3f || command.P2 != 0xff || command.Le != 0 {
 					t.Errorf("import parameters = %02x%02x, Le=%d; want 3fff without Le", command.P1, command.P2, command.Le)
@@ -118,7 +118,7 @@ func TestInvalidatedImportClosesDevice(t *testing.T) {
 	attributes := protocol.AlgorithmAttributes{
 		Algorithm: protocol.ECDSA, CurveOID: []byte{0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07},
 	}
-	metadata := importTestApplication([]byte{0x13, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07})
+	metadata := authenticationKeyApplication([]byte{0x13, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07})
 
 	for _, test := range []struct {
 		name     string
@@ -225,9 +225,72 @@ func importTestKey(t testing.TB) *ecdsa.PrivateKey {
 	return key
 }
 
-func importTestApplication(attributes []byte) []byte {
-	contents := bertlv.Append(nil, 0x4f, []byte{0xd2, 0x76, 0, 1, 0x24, 1, 3, 4, 0, 6, 0, 0, 0, 1, 0, 0})
-	contents = bertlv.Append(contents, 0x73, bertlv.Append(nil, 0xc3, attributes))
+func TestImportTemplateMismatchSkipsAuthentication(t *testing.T) {
+	key := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+	attributes := protocol.AlgorithmAttributes{
+		Algorithm: protocol.ECDSA,
+		CurveOID:  []byte{0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07},
+	}
+	d := New(&exchangeTransport{exchange: func(context.Context, iso7816.Command) (iso7816.Response, error) {
+		t.Error("mismatched import transmitted data")
+		return success(nil), nil
+	}})
 
-	return bertlv.Append(nil, 0x6e, contents)
+	t.Cleanup(func() { _ = d.Close() })
+
+	err := d.ImportKeyWithTemplate(t.Context(), protocol.ControlReferenceTemplate{
+		Tag: protocol.AuthenticationTemplateTag,
+	}, attributes, key, func(context.Context) ([]byte, error) {
+		t.Error("mismatched import requested authentication")
+		return []byte("encoded PW3"), nil
+	})
+
+	if !errors.Is(err, protocol.ErrKeyMismatch) {
+		t.Errorf("error = %v, want protocol.ErrKeyMismatch", err)
+	}
+}
+
+func TestRejectedKeyImportClearsPreparedData(t *testing.T) {
+	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x42}, ed25519.SeedSize))
+	password := []byte("encoded PW3")
+	attributes := protocol.AlgorithmAttributes{Algorithm: protocol.EdDSA, CurveOID: []byte{0x2b, 0x65, 0x70}}
+
+	var payload, sequence []byte
+
+	d := New(&exchangeTransport{exchange: func(_ context.Context, command iso7816.Command) (iso7816.Response, error) {
+		sequence = append(sequence, command.INS)
+		if command.INS == byte(protocol.PutDataOdd) {
+			payload = command.Data
+			if !bytes.Contains(payload, bytes.Repeat([]byte{0x42}, ed25519.SeedSize)) {
+				t.Error("import payload does not contain the prepared seed")
+			}
+
+			return iso7816.Response{Status: 0x6982}, nil
+		}
+
+		return success(nil), nil
+	}})
+
+	t.Cleanup(func() { _ = d.Close() })
+
+	err := d.ImportKeyWithTemplate(t.Context(), protocol.ControlReferenceTemplate{
+		Tag: protocol.AuthenticationTemplateTag,
+	}, attributes, key, func(context.Context) ([]byte, error) { return password, nil })
+
+	var apdu *iso7816.APDUError
+	if !errors.As(err, &apdu) || apdu.StatusWord() != 0x6982 {
+		t.Errorf("error = %v, want APDU status 6982", err)
+	}
+
+	if !bytes.Equal(sequence, []byte{0x20, 0xdb}) {
+		t.Errorf("sequence = %x, want VERIFY, IMPORT", sequence)
+	}
+
+	if len(payload) == 0 || !bytes.Equal(payload, make([]byte, len(payload))) {
+		t.Error("rejected import did not clear the prepared payload")
+	}
+
+	if !bytes.Equal(password, make([]byte, len(password))) {
+		t.Error("rejected import did not clear the transferred password")
+	}
 }

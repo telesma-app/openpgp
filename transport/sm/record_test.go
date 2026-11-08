@@ -16,7 +16,7 @@ func TestRecordKnownAnswers(t *testing.T) {
 	// initial state RND, standard OpenSSL CMAC receives AES_K^-1(RND) followed
 	// by the already padded record input. Header-only commands have exactly
 	// one padded header block; there is no second, empty-body padding block.
-	rnd := [16]byte(recordHex(t, "000102030405060708090a0b0c0d0e0f"))
+	rnd := [16]byte(decodeHex(t, "000102030405060708090a0b0c0d0e0f"))
 
 	for _, tc := range []struct {
 		name      string
@@ -66,7 +66,7 @@ func TestRecordKnownAnswers(t *testing.T) {
 		},
 		{
 			name: "AES256 even change reference without Le", keySize: 32, encoding: iso7816.EncodingExtended, macLength: 16,
-			command:   iso7816.Command{INS: 0x24, P2: 0x83, Data: recordHex(t, "31323334353637383132333435363738"), Encoding: iso7816.EncodingShort},
+			command:   iso7816.Command{INS: 0x24, P2: 0x83, Data: decodeHex(t, "31323334353637383132333435363738"), Encoding: iso7816.EncodingShort},
 			protected: "0c2400830000358721019eb2c797b7e60975df26b1258a8a64a795d6b1c9fce5ac412c28666c74a9b1e38e10ebd2537777be7f0e7e73d4a84161edee0000",
 			response:  "9000", status: 0x9000,
 		},
@@ -111,7 +111,7 @@ func TestRecordKnownAnswers(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if !bytes.Equal(wire, recordHex(t, tc.protected)) {
+			if !bytes.Equal(wire, decodeHex(t, tc.protected)) {
 				t.Errorf("protected APDU = %x, want %s", wire, tc.protected)
 			}
 
@@ -119,7 +119,7 @@ func TestRecordKnownAnswers(t *testing.T) {
 				t.Error("protect changed borrowed command data")
 			}
 
-			response, err := iso7816.ParseResponse(recordHex(t, tc.response))
+			response, err := iso7816.ParseResponse(decodeHex(t, tc.response))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -131,7 +131,7 @@ func TestRecordKnownAnswers(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if plaintext.Status != tc.status || !bytes.Equal(plaintext.Data, recordHex(t, tc.plaintext)) {
+			if plaintext.Status != tc.status || !bytes.Equal(plaintext.Data, decodeHex(t, tc.plaintext)) {
 				t.Errorf("unprotect = data %x status %s, want %s status %s", plaintext.Data, plaintext.Status, tc.plaintext, tc.status)
 			}
 
@@ -145,7 +145,7 @@ func TestRecordKnownAnswers(t *testing.T) {
 func TestRecordRejectsUnauthenticatedAndMalformedResponses(t *testing.T) {
 	// The valid-MAC padding and wrong-tag records were independently produced
 	// with the OpenSSL oracle documented by TestRecordKnownAnswers.
-	rnd := [16]byte(recordHex(t, "000102030405060708090a0b0c0d0e0f"))
+	rnd := [16]byte(decodeHex(t, "000102030405060708090a0b0c0d0e0f"))
 
 	for _, tc := range []struct {
 		name           string
@@ -187,7 +187,7 @@ func TestRecordRejectsUnauthenticatedAndMalformedResponses(t *testing.T) {
 				challenge[0] ^= 1
 			}
 
-			response, err := iso7816.ParseResponse(recordHex(t, tc.response))
+			response, err := iso7816.ParseResponse(decodeHex(t, tc.response))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -219,9 +219,9 @@ func TestRecordRejectsDataForStatusOnlyCommand(t *testing.T) {
 	defer session.clear()
 
 	command := iso7816.Command{INS: 0x20, P2: 0x83, Encoding: iso7816.EncodingShort}
-	rnd := [16]byte(recordHex(t, "000102030405060708090a0b0c0d0e0f"))
+	rnd := [16]byte(decodeHex(t, "000102030405060708090a0b0c0d0e0f"))
 
-	response, err := iso7816.ParseResponse(recordHex(t, "871101b35767e38f25c145c70fdae194095f64990290008e08284f46b6823e6f9e9000"))
+	response, err := iso7816.ParseResponse(decodeHex(t, "871101b35767e38f25c145c70fdae194095f64990290008e08284f46b6823e6f9e9000"))
 	if err != nil {
 		t.Fatal(err)
 	}

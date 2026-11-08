@@ -2,7 +2,6 @@ package protocol_test
 
 import (
 	"bytes"
-	"encoding/hex"
 	"errors"
 	"testing"
 
@@ -27,7 +26,7 @@ func TestParseKDFSpecificationExample(t *testing.T) {
 		{name: "template", hex: "f96e" + kdfSpecContents},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			data := kdfHex(t, test.hex)
+			data := decodeHex(t, test.hex)
 
 			got, err := protocol.ParseKDF(data)
 			if err != nil {
@@ -49,7 +48,7 @@ func TestParseKDFSpecificationExample(t *testing.T) {
 				{"initial PW1", got.InitialPW1Hash, "773784a602b6c81e3f092f4d7d00e17cc822d88f7360fcf2d2ef2d9d901f44b6"},
 				{"initial PW3", got.InitialPW3Hash, "2675d6164a0d4827d1d00c7eea620d015c00030a1cab38b4d0dd600b27dc9630"},
 			} {
-				if !bytes.Equal(field.got, kdfHex(t, field.want)) {
+				if !bytes.Equal(field.got, decodeHex(t, field.want)) {
 					t.Errorf("%s = %x, want %s", field.name, field.got, field.want)
 				}
 			}
@@ -65,15 +64,15 @@ func TestEncodeKDFSpecificationExample(t *testing.T) {
 	kdf := protocol.KDF{
 		Algorithm: protocol.KDFIterSaltedS2K, HashAlgorithm: protocol.KDFHashSHA256,
 		IterationCount: 100000,
-		PW1Salt:        []byte("01234567"), ResettingCodeSalt: kdfHex(t, "1011121314151617"), PW3Salt: []byte("ABCDEFGH"),
-		InitialPW1Hash: kdfHex(t, "773784a602b6c81e3f092f4d7d00e17cc822d88f7360fcf2d2ef2d9d901f44b6"),
-		InitialPW3Hash: kdfHex(t, "2675d6164a0d4827d1d00c7eea620d015c00030a1cab38b4d0dd600b27dc9630"),
+		PW1Salt:        []byte("01234567"), ResettingCodeSalt: decodeHex(t, "1011121314151617"), PW3Salt: []byte("ABCDEFGH"),
+		InitialPW1Hash: decodeHex(t, "773784a602b6c81e3f092f4d7d00e17cc822d88f7360fcf2d2ef2d9d901f44b6"),
+		InitialPW3Hash: decodeHex(t, "2675d6164a0d4827d1d00c7eea620d015c00030a1cab38b4d0dd600b27dc9630"),
 	}
 
 	got := protocol.EncodeKDF(kdf)
 	defer clear(got)
 
-	if want := kdfHex(t, kdfSpecContents); !bytes.Equal(got, want) {
+	if want := decodeHex(t, kdfSpecContents); !bytes.Equal(got, want) {
 		t.Errorf("KDF contents = %x, want %x", got, want)
 	}
 }
@@ -81,7 +80,7 @@ func TestEncodeKDFSpecificationExample(t *testing.T) {
 func TestKDFNoneEncoding(t *testing.T) {
 	for _, encoded := range []string{"", "f900", "810100", "81010087008803010203"} {
 		t.Run(encoded, func(t *testing.T) {
-			got, err := protocol.ParseKDF(kdfHex(t, encoded))
+			got, err := protocol.ParseKDF(decodeHex(t, encoded))
 			if err != nil || got.Algorithm != protocol.KDFNone {
 				t.Fatalf("KDF = %+v, %v", got, err)
 			}
@@ -95,7 +94,7 @@ func TestKDFNoneEncoding(t *testing.T) {
 				}
 			}
 
-			if data := protocol.EncodeKDF(got); !bytes.Equal(data, kdfHex(t, want)) {
+			if data := protocol.EncodeKDF(got); !bytes.Equal(data, decodeHex(t, want)) {
 				t.Errorf("encoded NONE = %x, want %s", data, want)
 			}
 		})
@@ -104,7 +103,7 @@ func TestKDFNoneEncoding(t *testing.T) {
 
 func TestKDFCountAndOptionalFields(t *testing.T) {
 	for _, count := range []string{"00000000", "ffffffff"} {
-		data := kdfHex(t, "8101038201088304"+count+"84083031323334353637")
+		data := decodeHex(t, "8101038201088304"+count+"84083031323334353637")
 
 		got, err := protocol.ParseKDF(data)
 		if err != nil {
@@ -130,7 +129,7 @@ func TestKDFUnknownFieldsAndAlgorithms(t *testing.T) {
 		"81017f900101",
 		"81010382017f83040000000084083031323334353637870101",
 	} {
-		data := kdfHex(t, encoded)
+		data := decodeHex(t, encoded)
 
 		got, err := protocol.ParseKDF(data)
 		if err != nil {
@@ -169,21 +168,10 @@ func TestParseKDFRejectsMalformedData(t *testing.T) {
 		"short SHA512 initial PW3": "81010382010a830400000000" + userSalt + "880101",
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := protocol.ParseKDF(kdfHex(t, encoded))
+			_, err := protocol.ParseKDF(decodeHex(t, encoded))
 			if !errors.Is(err, protocol.ErrInvalidResponse) {
 				t.Fatalf("ParseKDF = %v, want ErrInvalidResponse", err)
 			}
 		})
 	}
-}
-
-func kdfHex(t testing.TB, encoded string) []byte {
-	t.Helper()
-
-	data, err := hex.DecodeString(encoded)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return data
 }

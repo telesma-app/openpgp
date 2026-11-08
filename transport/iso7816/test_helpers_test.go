@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"testing"
+	"time"
 )
 
 var (
@@ -23,6 +24,19 @@ type fakeCard struct {
 	exchanges  []exchange
 	closeCalls int
 	closeErr   error
+}
+
+func newFakeCard(t testing.TB, exchanges []exchange) *fakeCard {
+	t.Helper()
+	card := &fakeCard{t: t, exchanges: exchanges}
+
+	t.Cleanup(func() {
+		if len(card.exchanges) != 0 {
+			t.Errorf("remaining exchanges = %d, want 0; next APDU = %x", len(card.exchanges), card.exchanges[0].request)
+		}
+	})
+
+	return card
 }
 
 func (c *fakeCard) Transmit(ctx context.Context, apdu []byte) ([]byte, error) {
@@ -53,12 +67,9 @@ func (c *fakeCard) Close() error {
 
 func newTransport(t testing.TB, exchanges ...exchange) (*Transport, *fakeCard) {
 	t.Helper()
-	card := &fakeCard{
-		t: t,
-		exchanges: append([]exchange{{
-			request: selectAPDU, response: selectResponse,
-		}}, exchanges...),
-	}
+	card := newFakeCard(t, append([]exchange{{
+		request: selectAPDU, response: selectResponse,
+	}}, exchanges...))
 
 	device, err := Open(context.Background(), card)
 	if err != nil {
@@ -72,4 +83,19 @@ func newTransport(t testing.TB, exchanges ...exchange) (*Transport, *fakeCard) {
 	})
 
 	return device, card
+}
+
+func receive[T any](t testing.TB, ch <-chan T, failure string) T {
+	t.Helper()
+
+	select {
+	case value := <-ch:
+		return value
+	case <-time.After(time.Second):
+		t.Fatal(failure)
+
+		var zero T
+
+		return zero
+	}
 }

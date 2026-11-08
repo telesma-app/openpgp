@@ -4,12 +4,10 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
-	"encoding/hex"
 	"errors"
 	"math/big"
 	"reflect"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/telesma-app/openpgp/protocol"
@@ -52,9 +50,9 @@ func TestEncodeRSAKeyImportLayouts(t *testing.T) {
 			before := rsaImportKeyValues(key)
 			precomputed := key.Precomputed
 
-			want := rsaImportHex(t, tt.prefix)
+			want := decodeMultilineHex(t, tt.prefix)
 			for _, part := range tt.parts {
-				want = append(want, rsaImportHex(t, part)...)
+				want = append(want, decodeMultilineHex(t, part)...)
 			}
 
 			defer clear(want)
@@ -115,7 +113,7 @@ func TestEncodeRSAKeyImportExponentWidthAndTemplate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			key := rsaImportTestKey(t)
 
-			want := rsaImportHex(t, tt.prefix+tt.exponent+rsaImportP+rsaImportQ)
+			want := decodeMultilineHex(t, tt.prefix+tt.exponent+rsaImportP+rsaImportQ)
 			defer clear(want)
 
 			got, err := protocol.EncodeKeyImport(tt.template, protocol.AlgorithmAttributes{
@@ -191,11 +189,11 @@ func rsaImportTestKey(t testing.TB) *rsa.PrivateKey {
 	t.Helper()
 
 	key := &rsa.PrivateKey{
-		PublicKey: rsa.PublicKey{N: new(big.Int).SetBytes(rsaImportHex(t, rsaImportN)), E: 65537},
-		D:         new(big.Int).SetBytes(rsaImportHex(t, rsaImportD)),
+		PublicKey: rsa.PublicKey{N: new(big.Int).SetBytes(decodeMultilineHex(t, rsaImportN)), E: 65537},
+		D:         new(big.Int).SetBytes(decodeMultilineHex(t, rsaImportD)),
 		Primes: []*big.Int{
-			new(big.Int).SetBytes(rsaImportHex(t, rsaImportP)),
-			new(big.Int).SetBytes(rsaImportHex(t, rsaImportQ)),
+			new(big.Int).SetBytes(decodeMultilineHex(t, rsaImportP)),
+			new(big.Int).SetBytes(decodeMultilineHex(t, rsaImportQ)),
 		},
 	}
 	if err := key.Validate(); err != nil {
@@ -207,17 +205,6 @@ func rsaImportTestKey(t testing.TB) *rsa.PrivateKey {
 
 func rsaImportKeyValues(key *rsa.PrivateKey) []string {
 	return []string{key.N.Text(16), key.D.Text(16), key.Primes[0].Text(16), key.Primes[1].Text(16)}
-}
-
-func rsaImportHex(t testing.TB, encoded string) []byte {
-	t.Helper()
-
-	data, err := hex.DecodeString(strings.Join(strings.Fields(encoded), ""))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return data
 }
 
 // OpenSSL RSA-2048 fixture with independently computed CRT values.

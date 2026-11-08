@@ -3,7 +3,6 @@ package sm
 import (
 	"bytes"
 	"crypto/aes"
-	"encoding/hex"
 	"errors"
 	"testing"
 )
@@ -22,7 +21,7 @@ func TestCBCDirectIVKnownAnswers(t *testing.T) {
 	// OpenSSL 3.5.9 enc -aes-128-cbc/-aes-256-cbc -nopad, with the IV below,
 	// independently supplies all ciphertexts after explicit 80/00 padding.
 	// https://csrc.nist.gov/CSRC/media/Projects/Cryptographic-Standards-and-Guidelines/documents/examples/AES_CBC.pdf
-	iv := [aes.BlockSize]byte(cryptoHex(t, "000102030405060708090a0b0c0d0e0f"))
+	iv := [aes.BlockSize]byte(decodeHex(t, "000102030405060708090a0b0c0d0e0f"))
 
 	for _, tc := range []struct {
 		name       string
@@ -40,14 +39,14 @@ func TestCBCDirectIVKnownAnswers(t *testing.T) {
 		{name: "AES-256 four blocks", key: cryptoAES256KeyHex, length: 64, ciphertext: "f58c4c04d6e5f1ba779eabfb5f7bfbd69cfc4e967edb808d679f777bc6702c7d39f23369a9d9bacfa530e26304231461b2eb05e2c39be9fcda6c19078c6a9d1b92f806397e76218aa5dc403c4ca80c4b"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			block, err := aes.NewCipher(cryptoHex(t, tc.key))
+			block, err := aes.NewCipher(decodeHex(t, tc.key))
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			plaintext := cryptoHex(t, cryptoMessageHex)[:tc.length]
+			plaintext := decodeHex(t, cryptoMessageHex)[:tc.length]
 			originalPlaintext := bytes.Clone(plaintext)
-			ciphertext := cryptoHex(t, tc.ciphertext)
+			ciphertext := decodeHex(t, tc.ciphertext)
 			originalCiphertext := bytes.Clone(ciphertext)
 
 			encrypted := encrypt(block, iv, plaintext)
@@ -91,17 +90,17 @@ func TestCMACKnownAnswers(t *testing.T) {
 		{name: "AES-256 four blocks", key: cryptoAES256KeyHex, length: 64, mac: "e1992190549f6ed5696a2c056c315410"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			block, err := aes.NewCipher(cryptoHex(t, tc.key))
+			block, err := aes.NewCipher(decodeHex(t, tc.key))
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			message := cryptoHex(t, cryptoMessageHex)[:tc.length]
+			message := decodeHex(t, cryptoMessageHex)[:tc.length]
 			original := bytes.Clone(message)
 
 			got := cmac(block, [aes.BlockSize]byte{}, message)
 
-			if !bytes.Equal(got[:], cryptoHex(t, tc.mac)) {
+			if !bytes.Equal(got[:], decodeHex(t, tc.mac)) {
 				t.Errorf("CMAC = %x, want %s", got, tc.mac)
 			}
 
@@ -118,7 +117,7 @@ func TestCMACInitialChainingValue(t *testing.T) {
 	// AES_K(AES_K^-1(IV)) initializes CMAC state to IV before the message.
 	// The AES-ECB decrypted IV is 2880adbdde2a0ea9dc72a7bf6201ec72 for AES-128
 	// and 393e4e6cdf9b1fc836120fa2a3d8f140 for AES-256.
-	iv := [aes.BlockSize]byte(cryptoHex(t, "000102030405060708090a0b0c0d0e0f"))
+	iv := [aes.BlockSize]byte(decodeHex(t, "000102030405060708090a0b0c0d0e0f"))
 
 	for _, tc := range []struct {
 		name   string
@@ -132,14 +131,14 @@ func TestCMACInitialChainingValue(t *testing.T) {
 		{name: "AES-256 partial block", key: cryptoAES256KeyHex, length: 20, mac: "4d2b92fbcaa3efef9eb31ec2c76b44df"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			block, err := aes.NewCipher(cryptoHex(t, tc.key))
+			block, err := aes.NewCipher(decodeHex(t, tc.key))
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			got := cmac(block, iv, cryptoHex(t, cryptoMessageHex)[:tc.length])
+			got := cmac(block, iv, decodeHex(t, cryptoMessageHex)[:tc.length])
 
-			if !bytes.Equal(got[:], cryptoHex(t, tc.mac)) {
+			if !bytes.Equal(got[:], decodeHex(t, tc.mac)) {
 				t.Errorf("CMAC with nonzero IV = %x, want %s", got, tc.mac)
 			}
 		})
@@ -149,12 +148,12 @@ func TestCMACInitialChainingValue(t *testing.T) {
 func TestDecryptRejectsInvalidPadding(t *testing.T) {
 	// Fixed OpenSSL AES-128-CBC ciphertexts decrypt to: sixteen zero bytes,
 	// fifteen zero bytes and 81, and 80 followed by thirty-one zero bytes.
-	block, err := aes.NewCipher(cryptoHex(t, cryptoAES128KeyHex))
+	block, err := aes.NewCipher(decodeHex(t, cryptoAES128KeyHex))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	iv := [aes.BlockSize]byte(cryptoHex(t, "000102030405060708090a0b0c0d0e0f"))
+	iv := [aes.BlockSize]byte(decodeHex(t, "000102030405060708090a0b0c0d0e0f"))
 
 	for _, tc := range []struct {
 		name       string
@@ -165,7 +164,7 @@ func TestDecryptRejectsInvalidPadding(t *testing.T) {
 		{name: "padding crosses block", ciphertext: "4c08220c79d9191022dc6674874ceaf8870b35c58d3b8e753fd5d114df671c4b"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ciphertext := cryptoHex(t, tc.ciphertext)
+			ciphertext := decodeHex(t, tc.ciphertext)
 			original := bytes.Clone(ciphertext)
 
 			plaintext, err := decrypt(block, iv, ciphertext)
@@ -192,12 +191,12 @@ func TestPadISO9797Method2(t *testing.T) {
 		{name: "aligned", data: "000102030405060708090a0b0c0d0e0f", want: "000102030405060708090a0b0c0d0e0f80000000000000000000000000000000"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			data := cryptoHex(t, tc.data)
+			data := decodeHex(t, tc.data)
 			original := bytes.Clone(data)
 
 			got := pad(data)
 
-			if !bytes.Equal(got, cryptoHex(t, tc.want)) {
+			if !bytes.Equal(got, decodeHex(t, tc.want)) {
 				t.Errorf("pad = %x, want %s", got, tc.want)
 			}
 
@@ -206,15 +205,4 @@ func TestPadISO9797Method2(t *testing.T) {
 			}
 		})
 	}
-}
-
-func cryptoHex(t testing.TB, text string) []byte {
-	t.Helper()
-
-	data, err := hex.DecodeString(text)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return data
 }

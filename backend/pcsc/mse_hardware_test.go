@@ -37,8 +37,8 @@ func TestHardwareMSE(t *testing.T) {
 		t.Fatal("OPENPGP_TEST_READER must name one exact reader")
 	}
 
-	password := hardwareAESPassword(t, "OPENPGP_TEST_PW1_HEX")
-	adminPassword := hardwareAESPassword(t, "OPENPGP_TEST_PW3_HEX")
+	password := hardwarePassword(t, "OPENPGP_TEST_PW1_HEX")
+	adminPassword := hardwarePassword(t, "OPENPGP_TEST_PW3_HEX")
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
@@ -66,14 +66,14 @@ func TestHardwareMSE(t *testing.T) {
 		t.Skip("card does not announce MANAGE SECURITY ENVIRONMENT support")
 	}
 
-	verifyHardwareAESCredentials(t, ctx, device, password, adminPassword)
+	verifyHardwareCredentials(t, ctx, device, password, adminPassword)
 
 	cleanup = func() {
 		if err := device.Close(); err != nil {
 			t.Errorf("close MSE test connection before factory reset: %v", err)
 		}
 
-		resetHardwareMSEApplication(t, reader, adminPassword)
+		resetHardwareApplication(t, reader, adminPassword)
 	}
 
 	for _, slot := range []struct {
@@ -127,7 +127,7 @@ func TestHardwareMSE(t *testing.T) {
 			}
 
 			device = card.New(connection, client.WithExtendedLength())
-			verifyHardwareAESCredentials(t, ctx, device, password, adminPassword)
+			verifyHardwareCredentials(t, ctx, device, password, adminPassword)
 		}
 
 		if !t.Run(mode.name, func(t *testing.T) {
@@ -261,80 +261,4 @@ func generateHardwareRSAKey(t testing.TB, ctx context.Context, device *card.Devi
 	}
 
 	return publicKey
-}
-
-func resetHardwareMSEApplication(t *testing.T, reader string, adminPassword []byte) {
-	t.Helper()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	connection, err := openpgppcsc.Open(ctx, reader)
-	if err != nil {
-		t.Errorf("reopen selected reader for MSE factory reset: %v", err)
-		return
-	}
-
-	device := card.New(connection)
-	defer func() {
-		if err := device.Close(); err != nil {
-			t.Errorf("close MSE factory-reset connection: %v", err)
-		}
-	}()
-
-	if err := device.Verify(ctx, protocol.PW3, adminPassword); err != nil {
-		t.Errorf("verify configured PW3 for MSE factory reset: %v", err)
-		return
-	}
-
-	if err := device.TerminateDF(ctx, nil); err != nil {
-		t.Errorf("terminate MSE test application: %v", err)
-		return
-	}
-
-	if err := device.Close(); err != nil {
-		t.Errorf("close terminated MSE application: %v", err)
-	}
-
-	connection, err = openpgppcsc.Open(ctx, reader)
-	if err != nil {
-		t.Errorf("reopen terminated MSE application: %v", err)
-		return
-	}
-
-	device = card.New(connection)
-	if err := device.ActivateFile(ctx); err != nil {
-		t.Errorf("activate MSE test application: %v", err)
-		return
-	}
-
-	data, err := device.GetData(ctx, protocol.KeyInformationObject)
-	if err != nil {
-		t.Errorf("read key information after MSE factory reset: %v", err)
-		return
-	}
-
-	keys, err := protocol.ParseKeyInformation(data)
-	if err != nil {
-		t.Errorf("parse key information after MSE factory reset: %v", err)
-		return
-	}
-
-	for i, key := range keys[:3] {
-		if byte(key.Reference) != byte(i+1) {
-			t.Errorf("key reference %d = %d, want %d", i, key.Reference, i+1)
-		}
-
-		if key.Status != 0 {
-			t.Errorf("key %d status after MSE factory reset = %d, want absent", key.Reference, key.Status)
-		}
-	}
-
-	certificates, err := device.GetCardholderCertificates(ctx)
-	if err != nil {
-		t.Errorf("read certificates after MSE factory reset: %v", err)
-		return
-	}
-
-	checkHardwareCertificates(t, certificates, protocol.CardholderCertificates{})
 }

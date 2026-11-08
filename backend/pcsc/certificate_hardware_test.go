@@ -3,13 +3,7 @@ package pcsc_test
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/hex"
-	"math/big"
 	"os"
 	"testing"
 	"time"
@@ -139,101 +133,5 @@ func TestHardwareWriteCertificates(t *testing.T) {
 		}) {
 			return
 		}
-	}
-}
-
-func newHardwareCertificate(t testing.TB, serial int64, name string) []byte {
-	t.Helper()
-
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	now := time.Now()
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(serial),
-		Subject: pkix.Name{
-			CommonName:   "OpenPGP hardware certificate " + name,
-			Organization: []string{"telesma-app OpenPGP hardware tests"},
-		},
-		NotBefore:             now.Add(-time.Hour),
-		NotAfter:              now.Add(24 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature,
-		BasicConstraintsValid: true,
-	}
-
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(der) <= 256 || len(der) >= 2048 {
-		t.Fatalf("%s fixture certificate length = %d, want 257..2047 bytes", name, len(der))
-	}
-
-	return der
-}
-
-func restoreHardwareCertificates(t *testing.T, reader string, password []byte, original protocol.CardholderCertificates) {
-	t.Helper()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	connection, err := openpgppcsc.Open(ctx, reader)
-	if err != nil {
-		t.Errorf("reopen selected reader for certificate restoration: %v", err)
-		return
-	}
-
-	device := card.New(connection, client.WithEmptyPutDataLe())
-	defer func() {
-		if err := device.Close(); err != nil {
-			t.Errorf("close restoration connection: %v", err)
-		}
-	}()
-
-	if err := device.Verify(ctx, protocol.PW3, password); err != nil {
-		t.Errorf("verify configured PW3 for certificate restoration: %v", err)
-		return
-	}
-
-	for _, certificate := range []struct {
-		name string
-		key  protocol.ControlReferenceTemplateTag
-		data []byte
-	}{
-		{name: "AUT", key: protocol.AuthenticationTemplateTag, data: original.Authentication},
-		{name: "DEC", key: protocol.ConfidentialityTemplateTag, data: original.Decryption},
-		{name: "SIG", key: protocol.DigitalSignatureTemplateTag, data: original.Signature},
-	} {
-		if err := device.PutCardholderCertificate(ctx, certificate.key, certificate.data, nil); err != nil {
-			t.Errorf("restore %s certificate: %v", certificate.name, err)
-		}
-	}
-
-	got, err := device.GetCardholderCertificates(ctx)
-	if err != nil {
-		t.Errorf("read restored certificates: %v", err)
-		return
-	}
-
-	checkHardwareCertificates(t, got, original)
-}
-
-func checkHardwareCertificates(t testing.TB, got, want protocol.CardholderCertificates) {
-	t.Helper()
-
-	if !bytes.Equal(got.Authentication, want.Authentication) {
-		t.Error("AUT certificate differs from expected bytes")
-	}
-
-	if !bytes.Equal(got.Decryption, want.Decryption) {
-		t.Error("DEC certificate differs from expected bytes")
-	}
-
-	if !bytes.Equal(got.Signature, want.Signature) {
-		t.Error("SIG certificate differs from expected bytes")
 	}
 }

@@ -2,12 +2,9 @@ package client_test
 
 import (
 	"bytes"
-	"context"
 	"crypto"
 	"crypto/ecdh"
-	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/binary"
@@ -68,50 +65,6 @@ func TestImportKeyWithTemplateWire(t *testing.T) {
 			}
 
 			checkKeyImportCleared(t, p)
-		})
-	}
-}
-
-func TestImportKeyDataBorrowsPreparedPayload(t *testing.T) {
-	_, _, material := keyImportP256Fixture(t)
-	template := protocol.ControlReferenceTemplate{Tag: protocol.DigitalSignatureTemplateTag, KeyReference: protocol.KeyReference(0x82)}
-
-	for _, test := range []struct {
-		name string
-		err  error
-	}{
-		{name: "success"},
-		{name: "transport failure", err: io.ErrUnexpectedEOF},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			data := slices.Concat([]byte{
-				0x4d, 0x70, 0xb6, 3, 0x84, 1, 0x82,
-				0x7f, 0x48, 4, 0x92, 0x20, 0x99, 0x41, 0x5f, 0x48, 0x61,
-			}, material)
-			before := slices.Clone(data)
-			want := slices.Concat([]byte{0, 0xdb, 0x3f, 0xff, 0x72}, data)
-
-			t.Cleanup(func() {
-				clear(data)
-				clear(before)
-				clear(want)
-			})
-			p := &keyImportPeer{t: t, want: want, response: iso7816.Response{Status: 0x9000}, err: test.err}
-			c := client.NewClient(p)
-
-			err := c.ImportKeyData(t.Context(), template, data)
-
-			if !errors.Is(err, test.err) {
-				t.Errorf("error = %v, want %v", err, test.err)
-			}
-
-			if p.calls != 1 {
-				t.Errorf("import exchanges = %d, want one", p.calls)
-			}
-
-			if !bytes.Equal(data, before) || !bytes.Equal(p.payload, before) {
-				t.Error("prepared import modified or cleared the borrowed payload")
-			}
 		})
 	}
 }
@@ -396,80 +349,4 @@ func TestImportMismatchAndUnsupportedAlgorithmPrecedeIO(t *testing.T) {
 			}
 		})
 	}
-}
-
-type keyImportPeer struct {
-	t        testing.TB
-	want     []byte
-	response iso7816.Response
-	err      error
-	payload  []byte
-	calls    int
-}
-
-func (p *keyImportPeer) Exchange(_ context.Context, command iso7816.Command) (iso7816.Response, error) {
-	p.t.Helper()
-
-	p.calls++
-	if p.calls != 1 {
-		p.t.Fatal("import retried or sent an unexpected additional command")
-	}
-
-	if command.Le != 0 {
-		p.t.Errorf("import Le = %d, want absent", command.Le)
-	}
-
-	raw, err := command.MarshalBinary()
-	if err != nil {
-		p.t.Fatal(err)
-	}
-	defer clear(raw)
-
-	if !bytes.Equal(raw, p.want) {
-		p.t.Error("import APDU differs from the independently constructed expected bytes")
-	}
-	// Keep the borrowed payload rather than cloning it to observe its clearing.
-	p.payload = command.Data
-
-	return p.response, p.err
-}
-
-func checkKeyImportCleared(t testing.TB, p *keyImportPeer) {
-	t.Helper()
-
-	if p.calls != 1 || len(p.payload) == 0 {
-		t.Fatalf("import exchanges = %d, payload length = %d; want one nonempty payload", p.calls, len(p.payload))
-	}
-
-	for _, b := range p.payload {
-		if b != 0 {
-			t.Fatal("owned encoded key payload was not cleared after import returned")
-		}
-	}
-}
-
-func keyImportP256Fixture(t testing.TB) (*ecdsa.PrivateKey, protocol.AlgorithmAttributes, []byte) {
-	t.Helper()
-
-	scalar := [32]byte{31: 1}
-
-	key, err := ecdsa.ParseRawPrivateKey(elliptic.P256(), scalar[:])
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	point, err := key.PublicKey.Bytes()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	material := slices.Concat(scalar[:], point)
-
-	t.Cleanup(func() { clear(material) })
-
-	attributes := protocol.AlgorithmAttributes{
-		Algorithm: protocol.ECDSA, CurveOID: []byte{0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07}, ImportFormat: 0xff,
-	}
-
-	return key, attributes, material
 }

@@ -26,7 +26,7 @@ type ECDHPublicKey struct {
 // ed448.PublicKey, x448.Key, or ECDHPublicKey for Brainpool/secp256k1 ECDH.
 // RSA exponents above crypto/rsa's 31-bit
 // limit return ErrUnsupportedAlgorithm. This is an accepted interoperability
-// limit; see TESTING.md. Unknown supplemental fields are ignored.
+// limit; see README.md. Unknown supplemental fields are ignored.
 func ParsePublicKey(attributes AlgorithmAttributes, data []byte) (crypto.PublicKey, error) {
 	if err := attributes.CheckSupported(); err != nil {
 		return nil, err

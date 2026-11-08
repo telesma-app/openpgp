@@ -36,8 +36,8 @@ func TestHardwareControlReferenceTemplateGenerate(t *testing.T) {
 		t.Fatal("OPENPGP_TEST_READER must name one exact reader")
 	}
 
-	password := hardwareAESPassword(t, "OPENPGP_TEST_PW1_HEX")
-	adminPassword := hardwareAESPassword(t, "OPENPGP_TEST_PW3_HEX")
+	password := hardwarePassword(t, "OPENPGP_TEST_PW1_HEX")
+	adminPassword := hardwarePassword(t, "OPENPGP_TEST_PW3_HEX")
 
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
@@ -56,14 +56,14 @@ func TestHardwareControlReferenceTemplateGenerate(t *testing.T) {
 
 	t.Cleanup(func() { cleanup() })
 
-	verifyHardwareAESCredentials(t, ctx, device, password, adminPassword)
+	verifyHardwareCredentials(t, ctx, device, password, adminPassword)
 
 	cleanup = func() {
 		if err := device.Close(); err != nil {
 			t.Errorf("close key-template connection before factory reset: %v", err)
 		}
 
-		resetHardwareMSEApplication(t, reader, adminPassword)
+		resetHardwareApplication(t, reader, adminPassword)
 	}
 
 	encodedAttributes := []byte{0x13, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0xff}

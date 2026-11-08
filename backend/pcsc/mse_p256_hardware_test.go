@@ -39,8 +39,8 @@ func TestHardwareMSEP256(t *testing.T) {
 		t.Fatal("OPENPGP_TEST_READER must name one exact reader")
 	}
 
-	password := hardwareAESPassword(t, "OPENPGP_TEST_PW1_HEX")
-	adminPassword := hardwareAESPassword(t, "OPENPGP_TEST_PW3_HEX")
+	password := hardwarePassword(t, "OPENPGP_TEST_PW1_HEX")
+	adminPassword := hardwarePassword(t, "OPENPGP_TEST_PW3_HEX")
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
@@ -68,14 +68,14 @@ func TestHardwareMSEP256(t *testing.T) {
 		t.Skip("card does not announce MANAGE SECURITY ENVIRONMENT support")
 	}
 
-	verifyHardwareAESCredentials(t, ctx, device, password, adminPassword)
+	verifyHardwareCredentials(t, ctx, device, password, adminPassword)
 
 	cleanup = func() {
 		if err := device.Close(); err != nil {
 			t.Errorf("close P-256 MSE connection before factory reset: %v", err)
 		}
 
-		resetHardwareMSEApplication(t, reader, adminPassword)
+		resetHardwareApplication(t, reader, adminPassword)
 	}
 
 	for _, slot := range []struct {
@@ -160,7 +160,7 @@ func TestHardwareMSEP256(t *testing.T) {
 			}
 
 			device = card.New(connection, client.WithExtendedLength())
-			verifyHardwareAESCredentials(t, ctx, device, password, adminPassword)
+			verifyHardwareCredentials(t, ctx, device, password, adminPassword)
 		}
 
 		if !t.Run(mode.name, func(t *testing.T) {

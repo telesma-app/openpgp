@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"slices"
 	"testing"
 
@@ -155,6 +156,103 @@ func TestReferenceDataMaintenancePreservesInputs(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestResetRetryCounterWithPW3(t *testing.T) {
+	for _, authenticate := range []bool{false, true} {
+		mode := "current verification"
+		if authenticate {
+			mode = "PW3 verification"
+		}
+
+		for _, test := range []struct {
+			name     string
+			response iso7816.Response
+			cause    error
+			want     error
+		}{
+			{name: "success", response: success(nil)},
+			{name: "APDU rejection", response: iso7816.Response{Status: 0x6982}},
+			{name: "transport failure", cause: io.ErrUnexpectedEOF, want: io.ErrUnexpectedEOF},
+			{name: "unexpected response data", response: success([]byte{1}), want: protocol.ErrInvalidResponse},
+		} {
+			t.Run(mode+"/"+test.name, func(t *testing.T) {
+				replacement := []byte("654321")
+				password := []byte("12345678")
+
+				want := [][]byte{{0, 0x2c, 2, 0x81, 6, '6', '5', '4', '3', '2', '1'}}
+				if authenticate {
+					want = append([][]byte{{0, 0x20, 0, 0x83, 8, '1', '2', '3', '4', '5', '6', '7', '8'}}, want...)
+				}
+
+				var calls, sourceCalls, closes int
+
+				d := New(&exchangeTransport{
+					exchange: func(_ context.Context, command iso7816.Command) (iso7816.Response, error) {
+						if calls >= len(want) {
+							t.Fatalf("unexpected command INS=%02x after %d exchanges", command.INS, calls)
+						}
+
+						raw, err := command.MarshalBinary()
+						if err != nil {
+							t.Fatal(err)
+						}
+
+						if !bytes.Equal(raw, want[calls]) {
+							t.Errorf("command %d = %x, want %x", calls, raw, want[calls])
+						}
+
+						calls++
+
+						if command.INS == 0x20 {
+							return success(nil), nil
+						}
+
+						if authenticate && !bytes.Equal(password, make([]byte, len(password))) {
+							t.Error("transferred PW3 was not cleared before resetting PW1")
+						}
+
+						return test.response, test.cause
+					},
+					close: func() error { closes++; return nil },
+				})
+
+				t.Cleanup(func() { _ = d.Close() })
+
+				var source AuthenticationSource
+				if authenticate {
+					source = func(context.Context) ([]byte, error) {
+						sourceCalls++
+						return password, nil
+					}
+				}
+
+				err := d.ResetRetryCounterWithPW3(t.Context(), replacement, source)
+
+				if test.response.Status == 0x6982 {
+					var apdu *iso7816.APDUError
+					if !errors.As(err, &apdu) || apdu.StatusWord() != 0x6982 {
+						t.Errorf("error = %v, want APDU error 6982", err)
+					}
+				} else if !errors.Is(err, test.want) {
+					t.Errorf("error = %v, want %v", err, test.want)
+				}
+
+				wantSources := 0
+				if authenticate {
+					wantSources = 1
+				}
+
+				if calls != len(want) || sourceCalls != wantSources || closes != 0 {
+					t.Errorf("exchanges=%d sources=%d closes=%d; want %d, %d, 0", calls, sourceCalls, closes, len(want), wantSources)
+				}
+
+				if string(replacement) != "654321" {
+					t.Error("PW1 reset changed the borrowed replacement")
+				}
+			})
+		}
 	}
 }
 

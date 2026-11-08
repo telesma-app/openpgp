@@ -72,8 +72,8 @@ func TestKDFDeriveKnownAnswers(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			salt := kdfDeriveHex(t, tt.salt)
-			password := kdfDeriveHex(t, tt.password)
+			salt := decodeHex(t, tt.salt)
+			password := decodeHex(t, tt.password)
 			kdf := protocol.KDF{
 				Algorithm: protocol.KDFIterSaltedS2K, HashAlgorithm: tt.hash,
 				IterationCount: tt.count, PW1Salt: salt,
@@ -298,15 +298,4 @@ func TestKDFDeriveRejectsUnsupportedAlgorithms(t *testing.T) {
 			}
 		})
 	}
-}
-
-func kdfDeriveHex(t testing.TB, encoded string) []byte {
-	t.Helper()
-
-	data, err := hex.DecodeString(encoded)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return data
 }

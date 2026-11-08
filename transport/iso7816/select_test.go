@@ -19,9 +19,9 @@ func TestSelectActivatesApplication(t *testing.T) {
 		{name: "FCI", response: []byte{0x6f, 0x00, 0x90, 0x00}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			card := &fakeCard{t: t, exchanges: []exchange{{
+			card := newFakeCard(t, []exchange{{
 				request: selectAPDU, response: test.response,
-			}}}
+			}})
 
 			if err := Select(t.Context(), card); err != nil {
 				t.Fatal(err)
@@ -43,9 +43,9 @@ func TestSelectReturnsApplicationRejection(t *testing.T) {
 		{name: "initialisation state", status: 0x6285},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			card := &fakeCard{t: t, exchanges: []exchange{{
+			card := newFakeCard(t, []exchange{{
 				request: selectAPDU, response: []byte{test.status.SW1(), test.status.SW2()},
-			}}}
+			}})
 
 			err := Select(t.Context(), card)
 
@@ -62,10 +62,10 @@ func TestSelectReturnsApplicationRejection(t *testing.T) {
 }
 
 func TestOpenInitialisationStateTransfersUsableCard(t *testing.T) {
-	card := &fakeCard{t: t, exchanges: []exchange{
+	card := newFakeCard(t, []exchange{
 		{request: selectAPDU, response: []byte{0x62, 0x85}},
 		{request: []byte{0x00, 0x44, 0x00, 0x00}, response: []byte{0x90, 0x00}},
-	}}
+	})
 
 	device, err := Open(t.Context(), card)
 	if err != nil {
@@ -118,9 +118,9 @@ func TestOpenRejectsOtherSelectStatuses(t *testing.T) {
 		{name: "missing application", status: 0x6a82},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			card := &fakeCard{t: t, exchanges: []exchange{{
+			card := newFakeCard(t, []exchange{{
 				request: selectAPDU, response: []byte{test.status.SW1(), test.status.SW2()},
-			}}}
+			}})
 
 			device, err := Open(t.Context(), card)
 			if device != nil {
@@ -161,7 +161,7 @@ func TestOpenDoesNotAcceptInitialisationStatusInIOError(t *testing.T) {
 			}
 
 			cardError := fmt.Errorf("card exchange failed: %w", cause)
-			card := &fakeCard{t: t, exchanges: []exchange{{request: selectAPDU, err: cardError}}}
+			card := newFakeCard(t, []exchange{{request: selectAPDU, err: cardError}})
 
 			device, err := Open(t.Context(), card)
 			if device != nil {
@@ -205,7 +205,7 @@ func TestOpenFailurePreservesCallerOwnership(t *testing.T) {
 		{name: "I/O failure", err: io.ErrClosedPipe},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			card := &fakeCard{t: t, exchanges: []exchange{{request: selectAPDU, response: test.response, err: test.err}}}
+			card := newFakeCard(t, []exchange{{request: selectAPDU, response: test.response, err: test.err}})
 
 			device, err := Open(t.Context(), card)
 			if device != nil || err == nil {

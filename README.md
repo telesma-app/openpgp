@@ -150,6 +150,10 @@ With explicit attributes, import preparation also precedes the password source.
 
 ## Usage notes
 
+- RSA public-key decoding accepts exponents with at most 31 significant bits.
+  Larger values return `protocol.ErrUnsupportedAlgorithm`. After acknowledged
+  key generation, this is wrapped in `client.KeyGenerationError`: the key may
+  already have been replaced, so do not retry automatically.
 - Password inputs must already use the card's encoding, including any configured KDF.
 - Key generation and import use the slot's configured algorithm. The application
   manages fingerprints, creation times and certificates after replacement.

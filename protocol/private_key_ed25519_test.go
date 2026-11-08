@@ -5,7 +5,6 @@ import (
 	"crypto"
 	"crypto/ecdh"
 	"crypto/ed25519"
-	"encoding/hex"
 	"errors"
 	"slices"
 	"testing"
@@ -19,10 +18,10 @@ func TestEncodeEd25519KeyImportRFC8032(t *testing.T) {
 		publicHex = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
 	)
 
-	seed := curve25519ImportHex(t, seedHex)
+	seed := decodeHex(t, seedHex)
 	defer clear(seed)
 
-	public := curve25519ImportHex(t, publicHex)
+	public := decodeHex(t, publicHex)
 
 	key := ed25519.NewKeyFromSeed(seed)
 	defer clear(key)
@@ -54,7 +53,7 @@ func TestEncodeEd25519KeyImportRFC8032(t *testing.T) {
 				},
 			} {
 				t.Run(format.name, func(t *testing.T) {
-					want := curve25519ImportHex(t, format.wire)
+					want := decodeHex(t, format.wire)
 					defer clear(want)
 
 					got, err := EncodeKeyImport(ControlReferenceTemplate{Tag: DigitalSignatureTemplateTag}, AlgorithmAttributes{
@@ -141,15 +140,4 @@ func Test25519KeyImportAlgorithmMismatch(t *testing.T) {
 			}
 		})
 	}
-}
-
-func curve25519ImportHex(t testing.TB, encoded string) []byte {
-	t.Helper()
-
-	decoded, err := hex.DecodeString(encoded)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return decoded
 }

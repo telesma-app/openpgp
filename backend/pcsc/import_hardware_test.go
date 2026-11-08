@@ -41,8 +41,8 @@ func TestHardwareImportKey(t *testing.T) {
 		t.Fatal("OPENPGP_TEST_READER must name one exact reader")
 	}
 
-	password := hardwareAESPassword(t, "OPENPGP_TEST_PW1_HEX")
-	adminPassword := hardwareAESPassword(t, "OPENPGP_TEST_PW3_HEX")
+	password := hardwarePassword(t, "OPENPGP_TEST_PW1_HEX")
+	adminPassword := hardwarePassword(t, "OPENPGP_TEST_PW3_HEX")
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
@@ -86,7 +86,7 @@ func TestHardwareImportKey(t *testing.T) {
 	originalDEC := bytes.Clone(application.DecryptionAlgorithmAttributes.Raw)
 	originalAUT := bytes.Clone(application.AuthenticationAlgorithmAttributes.Raw)
 
-	verifyHardwareAESCredentials(t, ctx, device, password, adminPassword)
+	verifyHardwareCredentials(t, ctx, device, password, adminPassword)
 
 	cleanup = func() {
 		if err := device.Close(); err != nil {
@@ -177,7 +177,7 @@ func TestHardwareImportKey(t *testing.T) {
 				}
 
 				device = card.New(connection, client.WithExtendedLength())
-				verifyHardwareAESCredentials(t, ctx, device, password, adminPassword)
+				verifyHardwareCredentials(t, ctx, device, password, adminPassword)
 			}
 
 			for _, profile := range profiles {
