@@ -1,11 +1,11 @@
 # Testing
 
-Run module checks independently of the parent Go workspace:
+Run checks from the repository root:
 
 ```sh
-GOWORK=off go test ./...
-GOWORK=off go test -race ./...
-GOWORK=off go vet ./...
+go test ./...
+go test -race ./...
+go vet ./...
 make lint
 ```
 
@@ -33,7 +33,7 @@ consume a retry.
 ## Read tests
 
 ```sh
-GOWORK=off OPENPGP_TEST=1 OPENPGP_TEST_READER='exact PC/SC reader name' \
+OPENPGP_TEST=1 OPENPGP_TEST_READER='exact PC/SC reader name' \
     go test -v ./backend/pcsc -run '^TestHardwareRead$' -count=1
 ```
 
@@ -58,7 +58,7 @@ evaluate certificate-chain trust.
 Certificate tests require PW3 and restore the original certificate contents:
 
 ```sh
-GOWORK=off OPENPGP_TEST_WRITE=1 OPENPGP_TEST_READER='exact test reader name' \
+OPENPGP_TEST_WRITE=1 OPENPGP_TEST_READER='exact test reader name' \
     OPENPGP_TEST_PW3_HEX='<encoded PW3 in hex>' \
     go test -v ./backend/pcsc -run '^TestHardwareWriteCertificates$' -count=1
 ```
@@ -81,7 +81,7 @@ passwords and data objects, returning the application to factory defaults.
 Use only a card authorized for that reset.
 
 ```sh
-GOWORK=off OPENPGP_TEST_WRITE=1 OPENPGP_TEST_RESET=1 \
+OPENPGP_TEST_WRITE=1 OPENPGP_TEST_RESET=1 \
     OPENPGP_TEST_READER='exact test reader name' \
     OPENPGP_TEST_PW1_HEX='<encoded PW1 in hex>' \
     OPENPGP_TEST_PW3_HEX='<encoded PW3 in hex>' \
@@ -136,7 +136,7 @@ preserves the caller's encoding for explicit interoperability probes.
 Select Solo 2's passing import profiles with:
 
 ```sh
-GOWORK=off OPENPGP_TEST_WRITE=1 OPENPGP_TEST_READER='exact test reader name' \
+OPENPGP_TEST_WRITE=1 OPENPGP_TEST_READER='exact test reader name' \
     OPENPGP_TEST_PW1_HEX='<encoded PW1 in hex>' \
     OPENPGP_TEST_PW3_HEX='<encoded PW3 in hex>' \
     go test -v ./backend/pcsc \
