@@ -10,7 +10,7 @@ workflows over [ISO 7816](https://github.com/telesma-app/iso7816) and
 > [!WARNING]
 > This module is under active development. Its public API may change during `v0.x`.
 
-## Support
+## Features
 
 The library follows OpenPGP Card 3.4.1. Available operations depend on the card
 and its access policy.
